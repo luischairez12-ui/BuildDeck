@@ -33,6 +33,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -71,6 +72,14 @@ fun BuildDeckApp(store: Store) {
     var importApkFor by remember { mutableStateOf<Project?>(null) }
     var busy by remember { mutableStateOf(false) }
     val aiControl = remember(store) { AiControlStore(context, store) }
+    val outputCollector = remember(context) { OutputCollector(context) }
+    val githubWorkspace = remember(context, store) { GitHubWorkspace(context, store) }
+    var outputConnected by remember { mutableStateOf(outputCollector.isConnected()) }
+    var githubAccount by remember { mutableStateOf(githubWorkspace.connectedAccount()) }
+    var githubRevision by remember { mutableIntStateOf(0) }
+    var syncProject by remember { mutableStateOf<Project?>(null) }
+    var syncCandidates by remember { mutableStateOf<List<SyncCandidate>>(emptyList()) }
+    var syncSelected by remember { mutableStateOf<Set<String>>(emptySet()) }
     var accessRevision by remember { mutableIntStateOf(0) }
     var patchForProject by remember { mutableStateOf<Project?>(null) }
     var patchReview by remember { mutableStateOf<PatchBundle?>(null) }
@@ -91,10 +100,24 @@ fun BuildDeckApp(store: Store) {
             if (event == Lifecycle.Event.ON_RESUME) {
                 buildRevision++
                 reload()
+                outputConnected = outputCollector.isConnected()
             }
         }
         owner?.lifecycle?.addObserver(observer)
         onDispose { owner?.lifecycle?.removeObserver(observer) }
+    }
+
+    // While a project is open, read granted build logs for live stages and APKs.
+    LaunchedEffect(selectedId, outputConnected) {
+        if (selectedId != null && outputConnected) {
+            while (true) {
+                val updated = withContext(Dispatchers.IO) {
+                    runCatching { outputCollector.reconcile(store, aiControl) }.getOrDefault(false)
+                }
+                if (updated) { buildRevision++; reload() }
+                delay(4000)
+            }
+        }
     }
 
     fun executeLocalBuild(project: Project) {
@@ -122,6 +145,23 @@ fun BuildDeckApp(store: Store) {
         pendingBuild = null
         if (granted && project != null) executeLocalBuild(project)
         else notify("Grant Termux command permission in BuildDeck's app settings to enable local builds.")
+    }
+    val outputPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try {
+                outputCollector.connect(uri)
+                outputConnected = true
+                scope.launch {
+                    val changed = withContext(Dispatchers.IO) {
+                        runCatching { outputCollector.reconcile(store, aiControl) }.getOrDefault(false)
+                    }
+                    if (changed) { buildRevision++; reload() }
+                }
+                notify("Output folder linked. Completed APKs can now import automatically.")
+            } catch (error: Exception) {
+                notify("Choose Downloads / BuildDeck / Out: ${error.message}")
+            }
+        }
     }
     val zipPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
@@ -200,6 +240,11 @@ fun BuildDeckApp(store: Store) {
 
     fun installRelease(release: Release) {
         try {
+            val metadata = ApkInspector.inspect(context, release.path)
+            if (metadata?.warning == true) {
+                notify(metadata.verdict + ". The installed app is unchanged.")
+                return
+            }
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(release.path))
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
@@ -300,6 +345,25 @@ fun BuildDeckApp(store: Store) {
                                 catch (ex: Exception) { notify("Cannot open file: ${ex.message}") }
                             },
                             onBuild = { buildConfirm = project },
+                            outputConnected = outputConnected,
+                            onConnectOutput = { outputPicker.launch(null) },
+                            repoLink = run { githubRevision; githubWorkspace.link(project) },
+                            onReviewSync = {
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        val candidates = withContext(Dispatchers.IO) { githubWorkspace.changedFiles(project) }
+                                        syncProject = project
+                                        syncCandidates = candidates
+                                        syncSelected = candidates.map { it.path }.toSet()
+                                    } catch (error: Exception) { notify("Unable to review GitHub changes: ${error.message}") }
+                                    finally { busy = false }
+                                }
+                            },
+                            onDismissBuild = { record ->
+                                aiControl.dismissBuild(record.id)
+                                buildRevision++
+                            },
                             onSaveSnapshot = {
                                 scope.launch {
                                     busy = true
@@ -314,11 +378,46 @@ fun BuildDeckApp(store: Store) {
                         )
                     }
                     section == "Projects" -> ProjectHome(projects, releases.size,
+                        githubAccount = githubAccount, githubBusy = busy,
+                        onGitHubConnect = { token ->
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val account = withContext(Dispatchers.IO) { githubWorkspace.connectAccount(token) }
+                                    githubAccount = account
+                                    notify("Connected GitHub @$account")
+                                } catch (error: Exception) { notify("GitHub connect failed: ${error.message}") }
+                                finally { busy = false }
+                            }
+                        },
+                        onGitHubDisconnect = {
+                            githubWorkspace.disconnectAccount()
+                            githubAccount = null
+                            notify("GitHub token disconnected")
+                        },
+                        onGitHubImport = { spec, branch ->
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val project = withContext(Dispatchers.IO) { githubWorkspace.importRepo(spec, branch) }
+                                    reload(); githubRevision++
+                                    selectedId = project.id
+                                    notify("Imported ${project.name} from GitHub")
+                                } catch (error: Exception) { notify("GitHub import failed: ${error.message}") }
+                                finally { busy = false }
+                            }
+                        },
                         onImport = { zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*")) },
                         onSelect = { selectedId = it.id }
                     )
                     section == "Releases" -> ReleaseHome(releases, projects, onSelect = { selectedId = it }, onInstall = ::installRelease)
-                    else -> SettingsPage()
+                    else -> SettingsPage(outputConnected,
+                        onConnect = { outputPicker.launch(null) },
+                        onDisconnect = {
+                            outputCollector.disconnect()
+                            outputConnected = false
+                        },
+                        githubAccount = githubAccount)
                 }
                 if (busy) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter))
@@ -326,6 +425,30 @@ fun BuildDeckApp(store: Store) {
             }
         }
 
+        if (syncProject != null) {
+            val target = syncProject!!
+            GitHubSyncReview(
+                projectName = target.name,
+                files = syncCandidates,
+                selected = syncSelected,
+                onSelected = { syncSelected = it },
+                onDismiss = { syncProject = null },
+                onCommit = {
+                    val paths = syncSelected.toList()
+                    syncProject = null
+                    scope.launch {
+                        busy = true
+                        try {
+                            val count = withContext(Dispatchers.IO) { githubWorkspace.pushChanges(target, paths) }
+                            githubRevision++
+                            notify("Committed $count approved source files to GitHub")
+                        } catch (error: Exception) {
+                            notify("GitHub sync stopped: ${error.message}. Earlier files may have committed.")
+                        } finally { busy = false }
+                    }
+                }
+            )
+        }
         if (patchReview != null) {
             val bundle = patchReview!!
             val selectedProject = projects.firstOrNull { it.id == selectedId }
@@ -403,7 +526,12 @@ fun BuildDeckApp(store: Store) {
 }
 
 @Composable
-private fun ProjectHome(projects: List<Project>, releases: Int, onImport: () -> Unit, onSelect: (Project) -> Unit) {
+private fun ProjectHome(
+    projects: List<Project>, releases: Int, onImport: () -> Unit, onSelect: (Project) -> Unit,
+    githubAccount: String?, githubBusy: Boolean,
+    onGitHubConnect: (String) -> Unit, onGitHubDisconnect: () -> Unit,
+    onGitHubImport: (String, String) -> Unit
+) {
     LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Text("Your app universe.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -418,6 +546,9 @@ private fun ProjectHome(projects: List<Project>, releases: Int, onImport: () -> 
             Text("Your sources stay on this device unless you explicitly export them.", style = MaterialTheme.typography.bodySmall, color = TextSoft, modifier = Modifier.padding(top = 10.dp))
             Spacer(Modifier.height(18.dp))
             Text("MY PROJECTS", style = MaterialTheme.typography.labelLarge, color = Accent)
+        }
+        item {
+            GitHubImportCard(githubAccount, githubBusy, onGitHubConnect, onGitHubDisconnect, onGitHubImport)
         }
         if (projects.isEmpty()) {
             item { ContentPanel { Text("No projects yet. Import an Android Gradle project ZIP to get started.", color = TextSoft) } }
@@ -466,6 +597,9 @@ private fun ProjectDetail(
     onViewLog: (BuildRecord) -> Unit,
     onRestore: (Snapshot) -> Unit,
     onEdit: (String) -> Unit, onBuild: () -> Unit, onSaveSnapshot: () -> Unit,
+    outputConnected: Boolean, onConnectOutput: () -> Unit,
+    repoLink: RepoLink?, onReviewSync: () -> Unit,
+    onDismissBuild: (BuildRecord) -> Unit,
     onExport: () -> Unit, onImportApk: () -> Unit, onInstall: (Release) -> Unit
 ) {
     LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -485,9 +619,22 @@ private fun ProjectDetail(
             Text("Tap a text file to edit it. Saving changes updates your next build.", color = TextSoft, style = MaterialTheme.typography.bodySmall)
         }
         item {
+            if (!outputConnected) {
+                ContentPanel {
+                    Text("AUTO APK COLLECTION", color = Accent, fontWeight = FontWeight.Bold)
+                    Text("Give BuildDeck read-only access to Downloads / BuildDeck / Out, so finished APKs and logs can be collected automatically.", color = TextSoft)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = onConnectOutput, modifier = Modifier.fillMaxWidth()) {
+                        Text("Connect Build Output Folder")
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+            GitHubProjectCard(repoLink, false, onReviewSync)
+            Spacer(Modifier.height(12.dp))
             AiProjectControls(access, onAccessChanged, onImportPatch)
             Spacer(Modifier.height(12.dp))
-            BuildRequestHistory(buildRecords, onLogImport, onViewLog)
+            BuildRequestHistory(buildRecords, onLogImport, onViewLog, onDismissBuild)
             Spacer(Modifier.height(12.dp))
         }
         if (filePaths.isEmpty()) item { ContentPanel { Text("No editable text files found.", color = TextSoft) } }
@@ -576,10 +723,22 @@ private fun ReleaseHome(releases: List<Release>, projects: List<Project>, onSele
 }
 
 @Composable
-private fun SettingsPage() {
+private fun SettingsPage(outputConnected: Boolean, onConnect: () -> Unit, onDisconnect: () -> Unit,
+                         githubAccount: String?) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Build engine", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("Offline-first • No account • No subscription • GitHub optional", color = TextSoft)
+        ContentPanel {
+            Text("BUILD OUTPUT FOLDER", fontWeight = FontWeight.Bold, color = Accent)
+            Text(if (outputConnected) "Connected to Downloads / BuildDeck / Out" else "Not connected. Automatic APK collection requires read-only folder access.", color = TextSoft)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onConnect) { Text(if (outputConnected) "Change output folder" else "Connect output folder") }
+            if (outputConnected) TextButton(onClick = onDisconnect) { Text("Disconnect folder") }
+        }
+        ContentPanel {
+            Text("GitHub: " + (githubAccount?.let { "Connected @$it" } ?: "Not connected"), color = TextSoft)
+            Text("Use the Projects tab to import a repository or connect a fine-grained token.", color = TextSoft)
+        }
         ContentPanel {
             Text("LOCAL BUILDER REQUIREMENTS", fontWeight = FontWeight.Bold, color = Accent)
             Spacer(Modifier.height(8.dp))
@@ -595,8 +754,8 @@ private fun SettingsPage() {
             Text("Only build trusted code. Keep a private, off-device backup of the Termux ~/.android/debug.keystore for future debug updates. Never upload signing keys to a public repo. Production signing is not implemented.", color = TextSoft)
         }
         ContentPanel {
-            Text("BuildDeck v0.2.5 • One-Tap Local Builder", fontWeight = FontWeight.Bold)
-            Text("Build status callbacks, APK Vault import, optional manual fallbacks and Termux debug signing. ChatGPT remote access is not connected yet.", color = TextSoft)
+            Text("BuildDeck v0.2.6 • Studio Automation", fontWeight = FontWeight.Bold)
+            Text("Output folder collection, live build stages, Github import and reviewed sync, APK version/signature checks. Remote AI access still requires a future bridge.", color = TextSoft)
         }
     }
 }
