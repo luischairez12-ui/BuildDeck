@@ -668,7 +668,11 @@ private fun ProjectDetail(
             OutlinedButton(onClick = onImportApk, modifier = Modifier.fillMaxWidth()) { Text("+ Import a built APK") }
         }
         items(releases, key = { it.id }) { release ->
+            val appContext = LocalContext.current
+            val details = remember(release.path) { ApkInspector.inspect(appContext, release.path) }
             ContentPanel {
+                if (details != null) Text(details.verdict, color = if (details.warning) MaterialTheme.colorScheme.error else Accent,
+                    style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(release.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -710,8 +714,16 @@ private fun ReleaseHome(releases: List<Release>, projects: List<Project>, onSele
         }
         if (releases.isEmpty()) item { ContentPanel { Text("No APKs saved. Open a project to import a finished APK.", color = TextSoft) } }
         items(releases, key = { it.id }) { release ->
+            val appContext = LocalContext.current
+            val details = remember(release.path) { ApkInspector.inspect(appContext, release.path) }
             ContentPanel {
                 Text(release.name, fontWeight = FontWeight.SemiBold)
+                if (details != null) {
+                    Text("${details.packageId} • v${details.version} (${details.versionCode})", color = TextSoft,
+                        style = MaterialTheme.typography.bodySmall)
+                    Text(details.verdict, color = if (details.warning) MaterialTheme.colorScheme.error else Accent,
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 Text(projects.find { it.id == release.projectId }?.name ?: "Unknown project", color = TextSoft, style = MaterialTheme.typography.bodySmall)
                 Row {
                     TextButton(onClick = { onInstall(release) }) { Text("Install APK") }
