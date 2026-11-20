@@ -2,8 +2,8 @@
 # BuildDeck 2.5 local builder. Executes only after the user's approval.
 # Source is transferred through Downloads, never executed from Downloads.
 set -Eeuo pipefail
-project_id="\${1:-}"
-zip_name="\${2:-}"
+project_id="${1:-}"
+zip_name="${2:-}"
 if [[ ! "$project_id" =~ ^[a-f0-9-]{36}$ ]] || [[ ! "$zip_name" =~ ^[a-f0-9-]{36}_[0-9]+\.zip$ ]] || [[ "$zip_name" != "$project_id"_* ]]; then
   echo "Invalid project id or archive name" >&2
   exit 2
@@ -61,8 +61,8 @@ else
   echo "No compatible Gradle executable found"; exit 8
 fi
 
-echo "Running: \${cmd[0]} --no-daemon --max-workers=2 assembleDebug"
-"\${cmd[@]}" --no-daemon --max-workers=2 assembleDebug "-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)"
+echo "Running: ${cmd[0]} --no-daemon --max-workers=2 assembleDebug"
+"${cmd[@]}" --no-daemon --max-workers=2 assembleDebug "-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)"
 apk="$(find "$root" -type f -path '*/build/outputs/apk/debug/*.apk' -name '*.apk' -print -quit)"
 [ -n "$apk" ] && [ -s "$apk" ] || { echo "Gradle completed without an APK"; exit 9; }
 dest="$out/$(date +%Y%m%d_%H%M%S)_$(basename "$apk")"
