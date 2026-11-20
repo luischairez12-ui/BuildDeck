@@ -57,6 +57,9 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
                             .ifBlank { "Termux build failed with exit code $exit" }
                     }
                     ai.completeLocalBuild(recordId, status, note, console)
+                    if (status == "SUCCESS_NEEDS_IMPORT") {
+                        runCatching { OutputCollector(appContext).reconcile(store, ai) }
+                    }
                 }
                 // Only revoke grants after Termux has completed the command.
                 val dir = File(appContext.filesDir, "builddeck_results")
