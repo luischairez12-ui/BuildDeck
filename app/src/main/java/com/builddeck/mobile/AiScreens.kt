@@ -59,6 +59,7 @@ private fun PermissionSwitch(name: String, checked: Boolean, onChange: (Boolean)
 
 @Composable
 fun BuildRequestHistory(records: List<BuildRecord>, onImportLog: (BuildRecord) -> Unit, onViewLog: (BuildRecord) -> Unit, onDismiss: (BuildRecord) -> Unit) {
+    var confirmClear by remember { mutableStateOf<BuildRecord?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Text("BUILD REQUESTS (${records.size})", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
         if (records.isEmpty()) Text("Build requests and their logs will appear here after a Termux build is submitted.",
@@ -73,7 +74,7 @@ fun BuildRequestHistory(records: List<BuildRecord>, onImportLog: (BuildRecord) -
                                 color = if (record.status == "FAILED") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                         }
                         TextButton(onClick = { onImportLog(record) }) { Text("Import log") }
-                        TextButton(onClick = { onDismiss(record) }) { Text("Clear") }
+                        TextButton(onClick = { confirmClear = record }) { Text("Clear") }
                     }
                     if (record.logFile != null) TextButton(onClick = { onViewLog(record) }) { Text("Read build log / errors") }
                     else if (record.status == "SUBMITTED" || record.status == "RUNNING") Text("Termux may still be working. Connect the Out folder for live results.", style = MaterialTheme.typography.bodySmall,
@@ -85,6 +86,16 @@ fun BuildRequestHistory(records: List<BuildRecord>, onImportLog: (BuildRecord) -
                 }
             }
         }
+    }
+    if (confirmClear != null) {
+        val record = confirmClear!!
+        AlertDialog(
+            onDismissRequest = { confirmClear = null },
+            title = { Text("Clear this build record?") },
+            text = { Text("This removes the history entry only. It does not stop a running Termux build or delete its APK.") },
+            confirmButton = { Button(onClick = { confirmClear = null; onDismiss(record) }) { Text("Clear record") } },
+            dismissButton = { TextButton(onClick = { confirmClear = null }) { Text("Cancel") } }
+        )
     }
 }
 
