@@ -30,7 +30,7 @@ object ApkInspector {
         val verdict: String
         val warning: Boolean
         if (installed == null) {
-            verdict = "New install"
+            verdict = "No installed match visible — signing compatibility not yet verified"
             warning = false
         } else {
             val cert1 = archive.signingInfo?.apkContentsSigners.orEmpty().map { sha(it.toByteArray()) }.toSet()
