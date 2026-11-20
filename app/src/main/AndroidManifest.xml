@@ -3,6 +3,7 @@
     <!-- User may opt into granting BuildDeck access to Termux commands. -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <queries><package android:name="com.termux" /></queries>
     <application android:allowBackup="false" android:label="BuildDeck" android:icon="@drawable/ic_builddeck" android:supportsRtl="true" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false">
         <receiver android:name=".LocalBuildResultReceiver" android:exported="false" />
