@@ -30,6 +30,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,15 +83,34 @@ fun BuildDeckApp(store: Store) {
     fun notify(message: String) { Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
     fun reload() { projects = store.projects(); releases = store.releases() }
 
+    // A Termux callback can arrive while BuildDeck is in the background.
+    // Refresh local build status/release cards on returning to the app.
+    DisposableEffect(context) {
+        val owner = context as? ComponentActivity
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                buildRevision++
+                reload()
+            }
+        }
+        owner?.lifecycle?.addObserver(observer)
+        onDispose { owner?.lifecycle?.removeObserver(observer) }
+    }
+
     fun executeLocalBuild(project: Project) {
         scope.launch {
             busy = true
             try {
                 val handoff = withContext(Dispatchers.IO) { store.handoffForLocalBuild(project) }
-                TermuxBridge.start(context, handoff)
-                aiControl.recordBuild(project)
+                val record = aiControl.recordBuild(project)
+                try {
+                    LocalBuildBridge.start(context, handoff, record.id)
+                    notify("Build started in Termux. The result will appear in this project's Build Requests.")
+                } catch (error: Exception) {
+                    aiControl.completeLocalBuild(record.id, "FAILED", "Couldn't start Termux: ${error.message}", error.stackTraceToString())
+                    throw error
+                }
                 buildRevision++
-                notify("Build submitted to Termux. Import its log afterward for a confirmed status.")
             } catch (ex: Exception) {
                 notify("Build couldn't start: ${ex.message}")
             } finally { busy = false }
@@ -368,7 +389,7 @@ fun BuildDeckApp(store: Store) {
         if (buildConfirm != null) AlertDialog(
             onDismissRequest = { buildConfirm = null },
             title = { Text("Run this project's build?") },
-            text = { Text("BuildDeck will send a copy of the source project to Termux. Gradle build scripts can execute code. Only build projects you trust. Termux, an Android SDK and compatible build tools must be installed first.") },
+            text = { Text("BuildDeck will send your approved source to Termux, compile with your on-phone SDK, and report success or errors here. Gradle scripts can execute code. Only build trusted projects.") },
             confirmButton = {
                 Button(onClick = {
                     val selected = buildConfirm!!
@@ -453,7 +474,7 @@ private fun ProjectDetail(
             Text("SOURCE WORKSPACE", style = MaterialTheme.typography.labelMedium, color = Accent)
             Spacer(Modifier.height(14.dp))
             Button(onClick = onBuild, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("⚡  BUILD APK ON THIS PHONE") }
-            Text("Experimental: uses your configured Termux build environment, not GitHub.", color = TextSoft, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+            Text("One-tap local build: Gradle 8.9 + SDK 35 + ARM AAPT2. Results return to Build Requests.", color = TextSoft, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(onClick = onSaveSnapshot, modifier = Modifier.weight(1f)) { Text("Save version") }
@@ -571,11 +592,11 @@ private fun SettingsPage() {
         }
         ContentPanel {
             Text("Important", fontWeight = FontWeight.Bold)
-            Text("Build scripts can run arbitrary code in Termux. Only build trusted sources. Signing release APKs with a persistent private key is a later feature; Batch 1 uses debug APKs.", color = TextSoft)
+            Text("Only build trusted code. Keep a private, off-device backup of the Termux ~/.android/debug.keystore for future debug updates. Never upload signing keys to a public repo. Production signing is not implemented.", color = TextSoft)
         }
         ContentPanel {
-            Text("BuildDeck v0.2 • Batch 2", fontWeight = FontWeight.Bold)
-            Text("AI access controls, approval-first patch inbox, source diffs, build requests and imported build logs. AI does not connect automatically.", color = TextSoft)
+            Text("BuildDeck v0.2.5 • One-Tap Local Builder", fontWeight = FontWeight.Bold)
+            Text("Build status callbacks, APK Vault import, optional manual fallbacks and Termux debug signing. ChatGPT remote access is not connected yet.", color = TextSoft)
         }
     }
 }
@@ -592,17 +613,3 @@ private fun ContentPanel(content: @Composable ColumnScope.() -> Unit) {
 
 private fun formatDate(timestamp: Long): String = SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(timestamp))
 
-private object TermuxBridge {
-    fun start(context: Context, handoff: BuildHandoff) {
-        val script = context.assets.open("termux_builder.sh").bufferedReader().use { it.readText() }
-        val intent = Intent("com.termux.RUN_COMMAND").apply {
-            setClassName("com.termux", "com.termux.app.RunCommandService")
-            putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
-            putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-s", "--", handoff.projectId, handoff.zipName))
-            putExtra("com.termux.RUN_COMMAND_STDIN", script)
-            putExtra("com.termux.RUN_COMMAND_BACKGROUND", false)
-            putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "BuildDeck Android build")
-        }
-        context.startService(intent) ?: error("Termux service not available. Install/configure Termux first.")
-    }
-}
