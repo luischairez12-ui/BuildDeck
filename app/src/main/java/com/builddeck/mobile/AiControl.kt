@@ -154,6 +154,29 @@ class AiControlStore(private val context: Context, private val store: Store) {
             raw.optString("logFile").ifBlank { null }, raw.optString("note")) }.getOrNull()
     }.filter { projectId == null || it.projectId == projectId }.sortedByDescending { it.submittedAt }
 
+    /** Official Termux callback result; never equate 'submitted' with 'built'. */
+    fun completeLocalBuild(recordId: String, state: String, detail: String, console: String): BuildRecord? {
+        require(state in setOf("READY", "SUCCESS_NEEDS_IMPORT", "FAILED"))
+        val records = buildRecords().toMutableList()
+        val index = records.indexOfFirst { it.id == recordId }
+        if (index == -1) return null
+        val logFile = File(logsDir, "$recordId.log")
+        val deliveredLog = File(File(context.filesDir, "builddeck_results"), "$recordId.log")
+        if (deliveredLog.isFile && deliveredLog.length() in 1L..4_000_000L) {
+            deliveredLog.copyTo(logFile, overwrite = true)
+        } else {
+            logFile.writeText(console.takeLast(120_000))
+        }
+        val updated = records[index].copy(
+            status = state,
+            logFile = logFile.absolutePath,
+            note = detail.take(240)
+        )
+        records[index] = updated
+        writeBuilds(records)
+        return updated
+    }
+
     fun importBuildLog(recordId: String, uri: Uri): BuildRecord {
         val records = buildRecords().toMutableList()
         val i = records.indexOfFirst { it.id == recordId }
