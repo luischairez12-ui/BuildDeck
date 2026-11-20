@@ -47,16 +47,35 @@ private val Accent = Color(0xFF78D9F8)
 private val TextSoft = Color(0xFFB1C0D3)
 
 class MainActivity : ComponentActivity() {
+    // A file manager can share an APK with BuildDeck even if Android's
+    // Downloads document picker refuses to enumerate Termux-created files.
+    private var incomingApk by mutableStateOf<Uri?>(null)
+
+    private fun sharedApk(intent: Intent?): Uri? {
+        if (intent?.action != Intent.ACTION_SEND) return null
+        return intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+            ?: intent.clipData?.getItemAt(0)?.uri
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        incomingApk = sharedApk(intent)
         val store = Store(this)
-        setContent { BuildDeckApp(store) }
+        setContent {
+            BuildDeckApp(store, incomingApk) { incomingApk = null }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        incomingApk = sharedApk(intent)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BuildDeckApp(store: Store) {
+fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var projects by remember { mutableStateOf(store.projects()) }
@@ -555,6 +574,42 @@ fun BuildDeckApp(store: Store) {
                 }
             )
         }
+        if (incomingSharedApk != null) AlertDialog(
+            onDismissRequest = onShareHandled,
+            title = { Text("Save shared APK to Vault") },
+            text = {
+                Column(
+                    Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Choose the project for this APK. BuildDeck copies it into the private Vault without installing it.",
+                        style = MaterialTheme.typography.bodySmall)
+                    if (projects.isEmpty()) Text("Import a source project first.")
+                    projects.forEach { target ->
+                        OutlinedButton(onClick = {
+                            val apk = incomingSharedApk
+                            onShareHandled()
+                            scope.launch {
+                                busy = true
+                                try {
+                                    withContext(Dispatchers.IO) { store.importRelease(target, apk) }
+                                    reload()
+                                    selectedId = null
+                                    section = "Releases"
+                                    notify("APK saved under " + target.name)
+                                } catch (error: Exception) {
+                                    notify("Could not import shared APK: " + error.message)
+                                } finally { busy = false }
+                            }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(target.name, maxLines = 2)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = onShareHandled) { Text("Cancel") } }
+        )
+
         if (outputScanResult != null) AlertDialog(
             onDismissRequest = { outputScanResult = null },
             title = { Text("Build Output Scan") },
@@ -755,6 +810,10 @@ private fun ProjectDetail(
                 }
                 Spacer(Modifier.height(12.dp))
             }
+            OutlinedButton(onClick = onImportApk, modifier = Modifier.fillMaxWidth()) {
+                Text("Choose a finished APK manually")
+            }
+            Spacer(Modifier.height(12.dp))
             GitHubProjectCard(repoLink, false, onReviewSync, onFetchGitHub)
             Spacer(Modifier.height(12.dp))
             AiProjectControls(access, onAccessChanged, onImportPatch)
@@ -891,7 +950,7 @@ private fun SettingsPage(outputConnected: Boolean, onConnect: () -> Unit, onDisc
             Text("Only build trusted code. Keep a private, off-device backup of the Termux ~/.android/debug.keystore for future debug updates. Never upload signing keys to a public repo. Production signing is not implemented.", color = TextSoft)
         }
         ContentPanel {
-            Text("BuildDeck v0.3.2 • APK Vault Handoff", fontWeight = FontWeight.Bold)
+            Text("BuildDeck v0.3.3 • File Manager Bridge", fontWeight = FontWeight.Bold)
             Text("Source ZIP validation prevents building APK resources as source. GitHub change review, rollback, and local builds remain available. Direct remote ChatGPT phone access is not enabled.", color = TextSoft)
         }
     }
