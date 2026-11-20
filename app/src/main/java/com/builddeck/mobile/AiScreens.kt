@@ -58,7 +58,7 @@ private fun PermissionSwitch(name: String, checked: Boolean, onChange: (Boolean)
 }
 
 @Composable
-fun BuildRequestHistory(records: List<BuildRecord>, onImportLog: (BuildRecord) -> Unit, onViewLog: (BuildRecord) -> Unit) {
+fun BuildRequestHistory(records: List<BuildRecord>, onImportLog: (BuildRecord) -> Unit, onViewLog: (BuildRecord) -> Unit, onDismiss: (BuildRecord) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Text("BUILD REQUESTS (${records.size})", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
         if (records.isEmpty()) Text("Build requests and their logs will appear here after a Termux build is submitted.",
@@ -73,13 +73,14 @@ fun BuildRequestHistory(records: List<BuildRecord>, onImportLog: (BuildRecord) -
                                 color = if (record.status == "FAILED") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                         }
                         TextButton(onClick = { onImportLog(record) }) { Text("Import log") }
+                        TextButton(onClick = { onDismiss(record) }) { Text("Clear") }
                     }
                     if (record.logFile != null) TextButton(onClick = { onViewLog(record) }) { Text("Read build log / errors") }
-                    else if (record.status == "SUBMITTED") Text("Termux is still running or its completion callback has not arrived.", style = MaterialTheme.typography.bodySmall,
+                    else if (record.status == "SUBMITTED" || record.status == "RUNNING") Text("Termux may still be working. Connect the Out folder for live results.", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (record.note.isNotBlank()) Text(record.note, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (record.status == "SUCCESS_NEEDS_IMPORT") Text("Open Releases below and select the APK from Downloads/BuildDeck/Out.", style = MaterialTheme.typography.bodySmall,
+                    if (record.status == "SUCCESS_NEEDS_IMPORT") Text("Connect the Out folder for auto-import, or select APK manually from Downloads/BuildDeck/Out.", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary)
                 }
             }
