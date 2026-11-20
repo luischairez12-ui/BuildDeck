@@ -39,7 +39,7 @@ finalize_build() {
 }
 trap finalize_build EXIT
 
-echo "BuildDeck Batch 2.6 local build"
+echo "BuildDeck local build pipeline v0.3.1"
 echo "BUILDDECK_STAGE=Preparing project"
 echo "Input: $inbox"
 echo "Java: $JAVA_HOME"
@@ -60,7 +60,54 @@ unzip -q "$inbox" -d "$workspace"
 root="$workspace"
 if [ ! -f "$root/settings.gradle" ] && [ ! -f "$root/settings.gradle.kts" ]; then
   candidate="$(find "$workspace" -mindepth 1 -maxdepth 4 -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
-  [ -n "$candidate" ] || { echo "Missing Gradle settings file"; exit 6; }
+  if [ -z "$candidate" ]; then
+    echo "Missing Gradle settings file: no settings.gradle or settings.gradle.kts in the source ZIP."
+    if unzip -Z1 "$inbox" | grep -Eq '^(classes[0-9]*\\.dex|resources\\.arsc)
+fi
+cd "$root"
+
+# Use a project's own wrapper if present; otherwise use the verified Gradle 8.9.
+# A different Android Gradle Plugin may require a different Gradle version.
+if [ -f ./gradlew ]; then
+  chmod +x ./gradlew
+  cmd=(./gradlew)
+elif [ -x "$HOME/opt/gradle-8.9/bin/gradle" ]; then
+  cmd=("$HOME/opt/gradle-8.9/bin/gradle")
+elif command -v gradle >/dev/null 2>&1; then
+  cmd=(gradle)
+else
+  echo "No compatible Gradle executable found"; exit 8
+fi
+
+echo "BUILDDECK_STAGE=Compiling Android app"
+echo "Running: ${cmd[0]} --no-daemon --max-workers=2 assembleDebug"
+"${cmd[@]}" --no-daemon --max-workers=2 assembleDebug "-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)"
+apk="$(find "$root" -type f -path '*/build/outputs/apk/debug/*.apk' -name '*.apk' -print -quit)"
+[ -n "$apk" ] && [ -s "$apk" ] || { echo "Gradle completed without an APK"; exit 9; }
+echo "BUILDDECK_STAGE=Packaging APK"
+dest="$out/${record_id:-$(date +%Y%m%d_%H%M%S)}_$(basename "$apk")"
+cp -f -- "$apk" "$dest"
+echo "BUILDDECK_APK=$dest"
+if [[ "$apk_uri" == content://com.builddeck.mobile.files/* ]] && [ -x /system/bin/content ]; then
+  if /system/bin/content write --uri "$apk_uri" < "$dest" >/dev/null 2>&1; then
+    echo "BUILDDECK_APK_IMPORTED=YES"
+  else
+    echo "BUILDDECK_APK_IMPORTED=NO - use the manual import from Downloads"
+  fi
+fi
+echo "BUILDDECK_STAGE=APK ready"
+echo "APK ready in Downloads/BuildDeck/Out/$project_id"
+echo "Signing: Gradle debug.keystore in Termux ~/.android/ (keep a private backup)."
+; then
+      echo "This input looks like a compiled Android APK instead of an Android Gradle source project."
+      echo "Use Releases to import compiled APKs; use GitHub Workspace to import complete source."
+    else
+      echo "First archive entries (to help diagnose the folder layout):"
+      unzip -Z1 "$inbox" | sed -n '1,15p'
+      echo "Use Projects -> GitHub Workspace -> Import to get full Gradle source."
+    fi
+    exit 6
+  fi
   root="$(dirname "$candidate")"
 fi
 cd "$root"
