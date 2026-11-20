@@ -272,6 +272,29 @@ class Store(private val context: Context) {
         }
     }
 
+    /** Imports the APK deposited by Termux into this app's write-granted FileProvider. */
+    fun importLocalRelease(project: Project, incoming: File, suggestedName: String): Release {
+        val inbox = File(context.filesDir, "builddeck_results").canonicalFile
+        require(incoming.canonicalFile.parentFile == inbox) { "APK is outside the authorized result inbox" }
+        require(incoming.isFile && incoming.length() in 101L..(500L * 1024 * 1024)) { "No valid APK was transferred" }
+        incoming.inputStream().use { input ->
+            require(input.read() == 'P'.code && input.read() == 'K'.code) { "Invalid APK archive" }
+        }
+        val id = UUID.randomUUID().toString()
+        val target = File(releaseRoot, "$id.apk")
+        try {
+            incoming.copyTo(target, overwrite = false)
+            val safeName = suggestedName.substringAfterLast('/').take(100).ifBlank { "local-debug.apk" }
+            val name = if (safeName.endsWith(".apk", ignoreCase = true)) safeName else "$safeName.apk"
+            val release = Release(id, project.id, name, target.absolutePath, System.currentTimeMillis())
+            saveReleases(releases() + release)
+            return release
+        } catch (error: Exception) {
+            target.delete()
+            throw error
+        }
+    }
+
     private fun zipSource(project: Project, destination: File) {
         val source = sourceDir(project)
         require(source.isDirectory) { "Project sources missing" }
