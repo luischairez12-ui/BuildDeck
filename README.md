@@ -3,6 +3,12 @@
 **Native Android app source.** Batch 2 was built by GitHub Actions and then compiled and installed on the user's OnePlus using Termux. Batch 2.5 changes are currently tested by CI; the one-tap Termux callback and automatic APK transfer still require phone testing.
 
 
+## Batch 3.1: Guard against APK-as-source imports (v0.3.1)
+
+If Build Requests says **Missing Gradle settings file (exit 6)** and the project shows `res/color/...` files rather than `settings.gradle.kts`, a compiled APK or incomplete archive was likely imported as source. **Projects → GitHub Workspace → Import GitHub source** and select the real source repository, such as `luischairez12-ui/BuildDeck`. A complete Gradle project must include its settings file and build scripts.
+
+BuildDeck now refuses source archives without Gradle settings, disables rebuilding legacy invalid projects, and explains how to recover. This does **not** decompile APKs. [Read the v0.3.1 troubleshooting guide](docs/BATCH31_SOURCE_IMPORT_FIX.md).
+
 ## Batch 3: Reviewed GitHub-to-BuildDeck change handoff (v0.3.0)
 
 - Update code in a GitHub repository through this ChatGPT conversation using the connected GitHub app.
