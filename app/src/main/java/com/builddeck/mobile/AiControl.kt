@@ -177,6 +177,21 @@ class AiControlStore(private val context: Context, private val store: Store) {
         return updated
     }
 
+    fun updateBuildProgress(recordId: String, status: String, note: String) {
+        require(status in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT"))
+        val records = buildRecords().toMutableList()
+        val index = records.indexOfFirst { it.id == recordId }
+        if (index == -1 || records[index].status in setOf("READY", "FAILED")) return
+        records[index] = records[index].copy(status = status, note = note.take(240))
+        writeBuilds(records)
+    }
+
+    /** Explicitly clear an obsolete request; never mislabel it as a failed build. */
+    fun dismissBuild(recordId: String) {
+        val existing = buildRecords()
+        writeBuilds(existing.filterNot { it.id == recordId })
+    }
+
     fun importBuildLog(recordId: String, uri: Uri): BuildRecord {
         val records = buildRecords().toMutableList()
         val i = records.indexOfFirst { it.id == recordId }
