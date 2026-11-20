@@ -75,8 +75,12 @@ fun BuildRequestHistory(records: List<BuildRecord>, onImportLog: (BuildRecord) -
                         TextButton(onClick = { onImportLog(record) }) { Text("Import log") }
                     }
                     if (record.logFile != null) TextButton(onClick = { onViewLog(record) }) { Text("Read build log / errors") }
-                    else Text("Status is unconfirmed until a build log is imported.", style = MaterialTheme.typography.bodySmall,
+                    else if (record.status == "SUBMITTED") Text("Termux is still running or its completion callback has not arrived.", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (record.note.isNotBlank()) Text(record.note, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (record.status == "SUCCESS_NEEDS_IMPORT") Text("Open Releases below and select the APK from Downloads/BuildDeck/Out.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
