@@ -4,6 +4,8 @@
 set -Eeuo pipefail
 project_id="${1:-}"
 zip_name="${2:-}"
+apk_uri="${3:-}"
+log_uri="${4:-}"
 if [[ ! "$project_id" =~ ^[a-f0-9-]{36}$ ]] || [[ ! "$zip_name" =~ ^[a-f0-9-]{36}_[0-9]+\.zip$ ]] || [[ "$zip_name" != "$project_id"_* ]]; then
   echo "Invalid project id or archive name" >&2
   exit 2
@@ -22,7 +24,18 @@ workspace="$HOME/builddeck/work/$project_id"
 mkdir -p "$out" "$HOME/builddeck/work"
 log="$out/build_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$log") 2>&1
-trap 'code=$?; if [ "$code" -eq 0 ]; then echo "BUILDDECK_RESULT=SUCCESS"; else echo "BUILDDECK_RESULT=FAILED (exit $code)"; fi' EXIT
+finalize_build() {
+  code=$?
+  trap - EXIT
+  if [ "$code" -eq 0 ]; then echo "BUILDDECK_RESULT=SUCCESS"; else echo "BUILDDECK_RESULT=FAILED (exit $code)"; fi
+  # Termux's PendingIntent is authoritative for completion; the FileProvider copy
+  # is a best-effort way to make full logs available in the Android app.
+  if [[ "$log_uri" == content://com.builddeck.mobile.files/* ]] && [ -s "$log" ]; then
+    /system/bin/content write --uri "$log_uri" < "$log" >/dev/null 2>&1 || true
+  fi
+  exit "$code"
+}
+trap finalize_build EXIT
 
 echo "BuildDeck Batch 2.5 local build"
 echo "Input: $inbox"
@@ -68,5 +81,12 @@ apk="$(find "$root" -type f -path '*/build/outputs/apk/debug/*.apk' -name '*.apk
 dest="$out/$(date +%Y%m%d_%H%M%S)_$(basename "$apk")"
 cp -f -- "$apk" "$dest"
 echo "BUILDDECK_APK=$dest"
+if [[ "$apk_uri" == content://com.builddeck.mobile.files/* ]] && [ -x /system/bin/content ]; then
+  if /system/bin/content write --uri "$apk_uri" < "$dest" >/dev/null 2>&1; then
+    echo "BUILDDECK_APK_IMPORTED=YES"
+  else
+    echo "BUILDDECK_APK_IMPORTED=NO - use the manual import from Downloads"
+  fi
+fi
 echo "APK ready in Downloads/BuildDeck/Out/$project_id"
 echo "Signing: Gradle debug.keystore in Termux ~/.android/ (keep a private backup)."
