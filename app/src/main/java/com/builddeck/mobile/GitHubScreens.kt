@@ -82,6 +82,7 @@ fun GitHubSyncReview(
     onCommit: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    var expanded by remember { mutableStateOf<Set<String>>(emptySet()) }
     AlertDialog(onDismissRequest = onDismiss,
         title = { Text("Approve GitHub source sync") },
         text = {
@@ -100,6 +101,12 @@ fun GitHubSyncReview(
                             Text(file.path, style = MaterialTheme.typography.bodySmall)
                             Text(if (file.oldSha == null) "New file" else "Modified file",
                                 style = MaterialTheme.typography.labelSmall)
+                            TextButton(onClick = {
+                                expanded = if (file.path in expanded) expanded - file.path else expanded + file.path
+                            }) { Text(if (file.path in expanded) "Hide source" else "Preview source") }
+                            if (file.path in expanded) {
+                                Text(file.text.take(600), style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
                 }
