@@ -74,12 +74,17 @@ fun BuildDeckApp(store: Store) {
     val aiControl = remember(store) { AiControlStore(context, store) }
     val outputCollector = remember(context) { OutputCollector(context) }
     val githubWorkspace = remember(context, store) { GitHubWorkspace(context, store) }
+    val incomingBridge = remember(store, githubWorkspace) { GitHubIncoming(store, githubWorkspace) }
     var outputConnected by remember { mutableStateOf(outputCollector.isConnected()) }
     var githubAccount by remember { mutableStateOf(githubWorkspace.connectedAccount()) }
     var githubRevision by remember { mutableIntStateOf(0) }
     var syncProject by remember { mutableStateOf<Project?>(null) }
     var syncCandidates by remember { mutableStateOf<List<SyncCandidate>>(emptyList()) }
     var syncSelected by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var incomingProject by remember { mutableStateOf<Project?>(null) }
+    var incomingReview by remember { mutableStateOf<IncomingReview?>(null) }
+    var incomingSelected by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var incomingBuildAfter by remember { mutableStateOf(true) }
     var accessRevision by remember { mutableIntStateOf(0) }
     var patchForProject by remember { mutableStateOf<Project?>(null) }
     var patchReview by remember { mutableStateOf<PatchBundle?>(null) }
@@ -348,6 +353,22 @@ fun BuildDeckApp(store: Store) {
                             outputConnected = outputConnected,
                             onConnectOutput = { outputPicker.launch(null) },
                             repoLink = run { githubRevision; githubWorkspace.link(project) },
+                            onFetchGitHub = {
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        val review = withContext(Dispatchers.IO) { incomingBridge.check(project) }
+                                        incomingProject = project
+                                        incomingReview = review
+                                        incomingSelected = review.changes
+                                            .filter { it.conflict == null && it.text != null }
+                                            .map { it.path }.toSet()
+                                        incomingBuildAfter = true
+                                    } catch (error: Exception) {
+                                        notify("GitHub fetch failed: ${error.message}")
+                                    } finally { busy = false }
+                                }
+                            },
                             onReviewSync = {
                                 scope.launch {
                                     busy = true
@@ -425,6 +446,39 @@ fun BuildDeckApp(store: Store) {
             }
         }
 
+        val currentIncoming = incomingReview
+        val incomingTarget = incomingProject
+        if (currentIncoming != null && incomingTarget != null) {
+            IncomingGithubReview(
+                review = currentIncoming,
+                selected = incomingSelected,
+                onSelected = { incomingSelected = it },
+                buildAfter = incomingBuildAfter,
+                onBuildAfterChanged = { incomingBuildAfter = it },
+                onDismiss = { incomingReview = null; incomingProject = null },
+                onApply = {
+                    val approved = incomingSelected
+                    val wantsBuild = incomingBuildAfter
+                    incomingReview = null
+                    incomingProject = null
+                    scope.launch {
+                        busy = true
+                        try {
+                            val safety = withContext(Dispatchers.IO) {
+                                incomingBridge.apply(incomingTarget, currentIncoming, approved)
+                            }
+                            githubRevision++
+                            reload()
+                            notify("Applied ${approved.size} GitHub files. Backup: ${safety.name}")
+                            if (wantsBuild) buildConfirm = incomingTarget
+                        } catch (error: Exception) {
+                            notify("Incoming changes not applied: ${error.message}")
+                        } finally { busy = false }
+                    }
+                }
+            )
+        }
+
         if (syncProject != null) {
             val target = syncProject!!
             GitHubSyncReview(
@@ -487,7 +541,21 @@ fun BuildDeckApp(store: Store) {
                     Text(visibleLog ?: "", style = MaterialTheme.typography.labelSmall)
                 }
             },
-            confirmButton = { TextButton(onClick = { visibleLog = null }) { Text("Close") } }
+            confirmButton = { TextButton(onClick = { visibleLog = null }) { Text("Close") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    val text = visibleLog.orEmpty().takeLast(16000)
+                    try {
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, text)
+                        }
+                        context.startActivity(Intent.createChooser(share, "Share build diagnostics"))
+                    } catch (error: Exception) {
+                        notify("Cannot share diagnostics: ${error.message}")
+                    }
+                }) { Text("Share log") }
+            }
         )
 
         if (restoreConfirm != null) AlertDialog(
@@ -598,7 +666,7 @@ private fun ProjectDetail(
     onRestore: (Snapshot) -> Unit,
     onEdit: (String) -> Unit, onBuild: () -> Unit, onSaveSnapshot: () -> Unit,
     outputConnected: Boolean, onConnectOutput: () -> Unit,
-    repoLink: RepoLink?, onReviewSync: () -> Unit,
+    repoLink: RepoLink?, onReviewSync: () -> Unit, onFetchGitHub: () -> Unit,
     onDismissBuild: (BuildRecord) -> Unit,
     onExport: () -> Unit, onImportApk: () -> Unit, onInstall: (Release) -> Unit
 ) {
@@ -630,7 +698,7 @@ private fun ProjectDetail(
                 }
                 Spacer(Modifier.height(12.dp))
             }
-            GitHubProjectCard(repoLink, false, onReviewSync)
+            GitHubProjectCard(repoLink, false, onReviewSync, onFetchGitHub)
             Spacer(Modifier.height(12.dp))
             AiProjectControls(access, onAccessChanged, onImportPatch)
             Spacer(Modifier.height(12.dp))
@@ -766,8 +834,8 @@ private fun SettingsPage(outputConnected: Boolean, onConnect: () -> Unit, onDisc
             Text("Only build trusted code. Keep a private, off-device backup of the Termux ~/.android/debug.keystore for future debug updates. Never upload signing keys to a public repo. Production signing is not implemented.", color = TextSoft)
         }
         ContentPanel {
-            Text("BuildDeck v0.2.6 • Studio Automation", fontWeight = FontWeight.Bold)
-            Text("Output folder collection, live build stages, Github import and reviewed sync, APK version/signature checks. Remote AI access still requires a future bridge.", color = TextSoft)
+            Text("BuildDeck v0.3.0 • GitHub AI Bridge", fontWeight = FontWeight.Bold)
+            Text("Fetch approved GitHub source changes, inspect conflicts, apply with rollback, then build on your phone. Build logs can be shared manually. Direct ChatGPT phone access is not enabled.", color = TextSoft)
         }
     }
 }
