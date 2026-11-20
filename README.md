@@ -1,6 +1,18 @@
-# BuildDeck — Batch 2 AI Control Center
+# BuildDeck — Batch 2.5 One-Tap Local Builder
 
-**Native Android app source, not a prebuilt APK.** Updated from Batch 1. This source has not yet been compiled or run on a physical Android device in the authoring environment.
+**Native Android app source.** Batch 2 was built by GitHub Actions and then compiled and installed on the user's OnePlus using Termux. Batch 2.5 changes are currently tested by CI; the one-tap Termux callback and automatic APK transfer still require phone testing.
+
+
+## Batch 2.5: One-tap local builds
+
+- Uses your verified Termux paths for Java 17, SDK 35, native ARM AAPT2, and Gradle 8.9.
+- Sends a bundled script to Termux only after you approve building a selected project.
+- Uses a one-shot Termux result callback to show actual success/failure and command logs.
+- Attempts direct APK import into the app's APK Vault; manual import remains available if Android blocks the transfer.
+- Reuses Termux's debug keystore for updates compiled on the same phone; **do not replace a Termux-signed app with a GitHub Actions-signed APK**.
+- No remote ChatGPT connector or GitHub sync is activated by this update.
+
+**How to update the existing, locally signed app:** See [Batch 2.5 local builder setup and update commands](docs/BATCH25_LOCAL_BUILDER.md). Building with the same Termux debug keystore avoids uninstall/data loss. GitHub Actions APKs are for fresh test installs only.
 
 ## What's new in Batch 2
 
