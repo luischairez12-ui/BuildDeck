@@ -1,7 +1,16 @@
-# BuildDeck — Batch 2.5 One-Tap Local Builder
+# BuildDeck — Batch 2.6 Studio Automation
 
 **Native Android app source.** Batch 2 was built by GitHub Actions and then compiled and installed on the user's OnePlus using Termux. Batch 2.5 changes are currently tested by CI; the one-tap Termux callback and automatic APK transfer still require phone testing.
 
+
+## Batch 2.6: multi-feature studio update
+
+- **Automatic APK collection:** Select only `Downloads/BuildDeck/Out` in the system folder picker; BuildDeck imports APKs/logs associated with a specific build request. Manual import stays available.
+- **Build dashboard:** Per-build stage markers, result callbacks, and the ability to clear obsolete requests.
+- **GitHub workspace:** Import public source repositories; optionally connect a fine-grained token encrypted by Android Keystore to review and push *approved* changed text files, with remote-conflict checks. No silent synchronization.
+- **Signing/version warnings:** Inspect APK package version and signing certificates when visible before installing. Retain Termux's existing debug key.
+- **Batch 2.6 update:** [Read setup and local signing instructions](docs/BATCH26_STUDIO_AUTOMATION.md). The CI APK is a **fresh-install test artifact**, not an update for a Termux-signed app.
+- **Still planned:** Direct authenticated AI control of a phone via an MCP service. The local AI patch-review workflow continues to require approval.
 
 ## Batch 2.5: One-tap local builds
 
