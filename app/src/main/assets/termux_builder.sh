@@ -6,6 +6,8 @@ project_id="${1:-}"
 zip_name="${2:-}"
 apk_uri="${3:-}"
 log_uri="${4:-}"
+record_id="${5:-}"
+if [[ -n "$record_id" ]] && [[ ! "$record_id" =~ ^[a-f0-9-]{36}$ ]]; then echo "Invalid build record id"; exit 2; fi
 if [[ ! "$project_id" =~ ^[a-f0-9-]{36}$ ]] || [[ ! "$zip_name" =~ ^[a-f0-9-]{36}_[0-9]+\.zip$ ]] || [[ "$zip_name" != "$project_id"_* ]]; then
   echo "Invalid project id or archive name" >&2
   exit 2
@@ -22,7 +24,7 @@ inbox="$HOME/storage/downloads/BuildDeck/Inbox/$zip_name"
 out="$HOME/storage/downloads/BuildDeck/Out/$project_id"
 workspace="$HOME/builddeck/work/$project_id"
 mkdir -p "$out" "$HOME/builddeck/work"
-log="$out/build_$(date +%Y%m%d_%H%M%S).log"
+log="$out/${record_id:-build_$(date +%Y%m%d_%H%M%S)}.log"
 exec > >(tee -a "$log") 2>&1
 finalize_build() {
   code=$?
@@ -37,7 +39,8 @@ finalize_build() {
 }
 trap finalize_build EXIT
 
-echo "BuildDeck Batch 2.5 local build"
+echo "BuildDeck Batch 2.6 local build"
+echo "BUILDDECK_STAGE=Preparing project"
 echo "Input: $inbox"
 echo "Java: $JAVA_HOME"
 echo "SDK: $ANDROID_HOME"
@@ -52,6 +55,7 @@ mkdir -p "$workspace"
 if unzip -Z1 "$inbox" | grep -Eq '(^/|(^|/)\.\.(/|$)|\\)'; then
   echo "Unsafe ZIP entries"; exit 5
 fi
+echo "BUILDDECK_STAGE=Extracting source"
 unzip -q "$inbox" -d "$workspace"
 root="$workspace"
 if [ ! -f "$root/settings.gradle" ] && [ ! -f "$root/settings.gradle.kts" ]; then
@@ -74,11 +78,13 @@ else
   echo "No compatible Gradle executable found"; exit 8
 fi
 
+echo "BUILDDECK_STAGE=Compiling Android app"
 echo "Running: ${cmd[0]} --no-daemon --max-workers=2 assembleDebug"
 "${cmd[@]}" --no-daemon --max-workers=2 assembleDebug "-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)"
 apk="$(find "$root" -type f -path '*/build/outputs/apk/debug/*.apk' -name '*.apk' -print -quit)"
 [ -n "$apk" ] && [ -s "$apk" ] || { echo "Gradle completed without an APK"; exit 9; }
-dest="$out/$(date +%Y%m%d_%H%M%S)_$(basename "$apk")"
+echo "BUILDDECK_STAGE=Packaging APK"
+dest="$out/${record_id:-$(date +%Y%m%d_%H%M%S)}_$(basename "$apk")"
 cp -f -- "$apk" "$dest"
 echo "BUILDDECK_APK=$dest"
 if [[ "$apk_uri" == content://com.builddeck.mobile.files/* ]] && [ -x /system/bin/content ]; then
@@ -88,5 +94,6 @@ if [[ "$apk_uri" == content://com.builddeck.mobile.files/* ]] && [ -x /system/bi
     echo "BUILDDECK_APK_IMPORTED=NO - use the manual import from Downloads"
   fi
 fi
+echo "BUILDDECK_STAGE=APK ready"
 echo "APK ready in Downloads/BuildDeck/Out/$project_id"
 echo "Signing: Gradle debug.keystore in Termux ~/.android/ (keep a private backup)."
