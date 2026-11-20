@@ -59,7 +59,7 @@ class GitHubWorkspace(private val context: Context, private val store: Store) {
     fun connectAccount(rawToken: String): String {
         val value = rawToken.trim()
         require(value.length in 20..300 && !value.contains('\n')) { "Enter a valid fine-grained GitHub access token" }
-        val user = requestJson("/user", "GET", null, value).getString("login")
+        val user = (requestJson("/user", "GET", null, value) ?: error("GitHub account not found")).getString("login")
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, getKey())
         val stored = Base64.getEncoder().encodeToString(cipher.iv + cipher.doFinal(value.toByteArray()))
