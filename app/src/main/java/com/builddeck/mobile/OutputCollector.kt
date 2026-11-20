@@ -3,6 +3,7 @@ package com.builddeck.mobile
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 
 /** User-granted access to Downloads/BuildDeck/Out, never all-files permission. */
@@ -29,6 +30,39 @@ class OutputCollector(private val context: Context) {
 
     private fun treeUri(): Uri? = prefs.getString("treeUri", null)?.let(Uri::parse)?.takeIf { uri ->
         context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
+    }
+
+    /**
+     * Android's DocumentsProvider can return an empty children list for shared
+     * folders created by Termux even though the files exist. This scoped fallback
+     * opens one exact build file within the user-granted tree instead of enumerating.
+     * Never accepts arbitrary paths: both IDs are UUIDs and the name comes from a
+     * successful, user-requested build log.
+     */
+    private fun directApkUri(tree: Uri, record: BuildRecord, ai: AiControlStore): Uri? {
+        if (!record.id.matches(Regex("[a-f0-9-]{36}")) ||
+            !record.projectId.matches(Regex("[a-f0-9-]{36}"))) return null
+        val log = runCatching { ai.buildLog(record) }.getOrDefault("")
+        val fromLog = log.lineSequence().mapNotNull { line ->
+            if (!line.startsWith("BUILDDECK_APK=")) return@mapNotNull null
+            val name = line.substringAfter("BUILDDECK_APK=").substringAfterLast('/')
+            name.takeIf { it.startsWith("${record.id}_") &&
+                it.matches(Regex("[a-f0-9-]{36}_[a-zA-Z0-9_.-]+\\.apk")) }
+        }.lastOrNull()
+        val candidates = listOfNotNull(fromLog, "${record.id}_app-debug.apk").distinct()
+        val rootId = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull()
+            ?: return null
+        for (name in candidates) {
+            val fileId = "$rootId/${record.projectId}/$name"
+            val uri = DocumentsContract.buildDocumentUriUsingTree(tree, fileId)
+            val canRead = runCatching {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    input.read() == 'P'.code && input.read() == 'K'.code
+                } == true
+            }.getOrDefault(false)
+            if (canRead) return uri
+        }
+        return null
     }
 
     /** Retry auto-import when Termux's direct FileProvider handoff did not work. */
@@ -58,9 +92,9 @@ class OutputCollector(private val context: Context) {
         return when {
             readyAfter > readyBefore -> "Success! Imported ${readyAfter - readyBefore} APK(s) into Vault. Open Releases."
             updated -> "Out scan updated build status. $stillPending builds still need import; see Build Requests."
-            folders.isEmpty() -> "Selected Out folder is empty. Reconnect the Out folder that contains Termux builds."
-            matching.isEmpty() -> "Out is accessible with ${folders.size} project folders, but none match pending builds. Reconnect the correct Out folder."
-            found == 0 -> "Project folder found but no matching APK. Reconnect the correct Out folder."
+            folders.isEmpty() -> "Android reports no visible folders inside Out, even though Termux may have saved an APK there. Direct-file access was attempted. Use + Import a built APK for now; do not rename folders again."
+            matching.isEmpty() -> "The folder picker cannot see a matching project folder. Direct-file access was attempted. Use the project APK import picker instead of reconnecting repeatedly."
+            found == 0 -> "No indexed APK was found for the pending build. Try + Import a built APK from Downloads."
             else -> "Found $found APK(s), but import is blocked. Check the Build Request for the import error."
         }
     }
@@ -68,15 +102,20 @@ class OutputCollector(private val context: Context) {
     fun reconcile(store: Store, ai: AiControlStore): Boolean {
         val uri = treeUri() ?: return false
         val root = DocumentFile.fromTreeUri(context, uri)?.takeIf { it.isDirectory } ?: return false
-        val directories = root.listFiles().filter { it.isDirectory }.associateBy { it.name }
+        val directories = runCatching {
+            root.listFiles().filter { it.isDirectory }.associateBy { it.name }
+        }.getOrDefault(emptyMap())
         var changed = false
         for (record in ai.buildRecords().take(80)) {
             if (record.status !in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT", "FAILED")) continue
-            val directory = directories[record.projectId] ?: continue
-            val files = directory.listFiles()
+            val files = runCatching { directories[record.projectId]?.listFiles()?.toList() }
+                .getOrNull().orEmpty()
             val log = files.firstOrNull { it.isFile && it.name == "${record.id}.log" }
-            val apk = files.firstOrNull { it.isFile && it.name?.startsWith("${record.id}_") == true &&
+            val listedApk = files.firstOrNull { it.isFile && it.name?.startsWith("${record.id}_") == true &&
                 it.name?.endsWith(".apk", ignoreCase = true) == true }
+            val apkUri = listedApk?.uri ?: if (record.status == "SUCCESS_NEEDS_IMPORT") {
+                directApkUri(uri, record, ai)
+            } else null
             val logText = if (log != null && log.length() in 1L..4_000_000L) {
                 runCatching { context.contentResolver.openInputStream(log.uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
             } else null
@@ -88,9 +127,9 @@ class OutputCollector(private val context: Context) {
             val stage = logText?.lineSequence()
                 ?.filter { it.startsWith("BUILDDECK_STAGE=") }?.lastOrNull()?.substringAfter('=').orEmpty()
             val project = store.projects().firstOrNull { it.id == record.projectId }
-            if ((result == "SUCCESS" || record.status == "SUCCESS_NEEDS_IMPORT") && apk != null && project != null) {
+            if ((result == "SUCCESS" || record.status == "SUCCESS_NEEDS_IMPORT") && apkUri != null && project != null) {
                 try {
-                    store.importRelease(project, apk.uri)
+                    store.importRelease(project, apkUri)
                     ai.completeLocalBuild(record.id, "READY", "APK saved automatically to the Vault", logText.orEmpty())
                     changed = true
                 } catch (error: Exception) {
