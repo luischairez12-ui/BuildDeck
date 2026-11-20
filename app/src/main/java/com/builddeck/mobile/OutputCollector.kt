@@ -38,7 +38,7 @@ class OutputCollector(private val context: Context) {
         val directories = root.listFiles().filter { it.isDirectory }.associateBy { it.name }
         var changed = false
         for (record in ai.buildRecords().take(80)) {
-            if (record.status !in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT")) continue
+            if (record.status !in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT", "FAILED")) continue
             val directory = directories[record.projectId] ?: continue
             val files = directory.listFiles()
             val log = files.firstOrNull { it.isFile && it.name == "${record.id}.log" }
@@ -70,7 +70,7 @@ class OutputCollector(private val context: Context) {
             } else if (result == "FAILED" && record.status != "FAILED") {
                 ai.completeLocalBuild(record.id, "FAILED", "Build failed — check the log", logText.orEmpty())
                 changed = true
-            } else if (result == "SUCCESS" && record.status != "SUCCESS_NEEDS_IMPORT") {
+            } else if (result == "SUCCESS" && record.status !in setOf("SUCCESS_NEEDS_IMPORT", "FAILED")) {
                 ai.completeLocalBuild(record.id, "SUCCESS_NEEDS_IMPORT", "Compiled; use manual APK import", logText.orEmpty())
                 changed = true
             } else if (stage.isNotBlank() && record.note != stage && result.isBlank() &&
