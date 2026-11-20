@@ -73,7 +73,8 @@ class OutputCollector(private val context: Context) {
             } else if (result == "SUCCESS" && record.status != "SUCCESS_NEEDS_IMPORT") {
                 ai.completeLocalBuild(record.id, "SUCCESS_NEEDS_IMPORT", "Compiled; use manual APK import", logText.orEmpty())
                 changed = true
-            } else if (stage.isNotBlank() && record.note != stage && result.isBlank()) {
+            } else if (stage.isNotBlank() && record.note != stage && result.isBlank() &&
+                record.status in setOf("SUBMITTED", "RUNNING")) {
                 ai.updateBuildProgress(record.id, "RUNNING", stage)
                 changed = true
             }
