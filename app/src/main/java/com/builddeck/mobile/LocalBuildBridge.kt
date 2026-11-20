@@ -36,7 +36,7 @@ object LocalBuildBridge {
         val command = Intent("com.termux.RUN_COMMAND").apply {
             setClassName("com.termux", "com.termux.app.RunCommandService")
             putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
-            putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-s", "--", handoff.projectId, handoff.zipName, apkUri.toString(), logUri.toString()))
+            putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-s", "--", handoff.projectId, handoff.zipName, apkUri.toString(), logUri.toString(), recordId))
             putExtra("com.termux.RUN_COMMAND_STDIN", script)
             putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
             putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", callback)
