@@ -92,6 +92,7 @@ fun BuildDeckApp(store: Store) {
     var patchSelected by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var logForBuild by remember { mutableStateOf<BuildRecord?>(null) }
     var visibleLog by remember { mutableStateOf<String?>(null) }
+    var outputScanResult by remember { mutableStateOf<String?>(null) }
     var buildRevision by remember { mutableIntStateOf(0) }
 
     fun notify(message: String) { Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
@@ -358,6 +359,21 @@ fun BuildDeckApp(store: Store) {
                             },
                             outputConnected = outputConnected,
                             onConnectOutput = { outputPicker.launch(null) },
+                            onScanOutput = {
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        val result = withContext(Dispatchers.IO) {
+                                            outputCollector.scanSummary(store, aiControl)
+                                        }
+                                        buildRevision++
+                                        reload()
+                                        outputScanResult = result
+                                    } catch (error: Exception) {
+                                        outputScanResult = "Output scan failed: " + error.message.orEmpty()
+                                    } finally { busy = false }
+                                }
+                            },
                             repoLink = run { githubRevision; githubWorkspace.link(project) },
                             onFetchGitHub = {
                                 scope.launch {
@@ -539,6 +555,20 @@ fun BuildDeckApp(store: Store) {
                 }
             )
         }
+        if (outputScanResult != null) AlertDialog(
+            onDismissRequest = { outputScanResult = null },
+            title = { Text("Build Output Scan") },
+            text = { Text(outputScanResult.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = { outputScanResult = null }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { outputScanResult = null; outputPicker.launch(null) }) {
+                    Text("Reconnect Out folder")
+                }
+            }
+        )
+
         if (visibleLog != null) AlertDialog(
             onDismissRequest = { visibleLog = null },
             title = { Text("Build log") },
@@ -672,7 +702,7 @@ private fun ProjectDetail(
     onRestore: (Snapshot) -> Unit,
     onEdit: (String) -> Unit, onBuild: () -> Unit, onSaveSnapshot: () -> Unit,
     sourceReady: Boolean, onOpenGitHubImport: () -> Unit,
-    outputConnected: Boolean, onConnectOutput: () -> Unit,
+    outputConnected: Boolean, onConnectOutput: () -> Unit, onScanOutput: () -> Unit,
     repoLink: RepoLink?, onReviewSync: () -> Unit, onFetchGitHub: () -> Unit,
     onDismissBuild: (BuildRecord) -> Unit,
     onExport: () -> Unit, onImportApk: () -> Unit, onInstall: (Release) -> Unit
@@ -716,6 +746,12 @@ private fun ProjectDetail(
                     Button(onClick = onConnectOutput, modifier = Modifier.fillMaxWidth()) {
                         Text("Connect Build Output Folder")
                     }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+            if (outputConnected) {
+                OutlinedButton(onClick = onScanOutput, modifier = Modifier.fillMaxWidth()) {
+                    Text("Scan Out folder and collect APKs")
                 }
                 Spacer(Modifier.height(12.dp))
             }
@@ -855,7 +891,7 @@ private fun SettingsPage(outputConnected: Boolean, onConnect: () -> Unit, onDisc
             Text("Only build trusted code. Keep a private, off-device backup of the Termux ~/.android/debug.keystore for future debug updates. Never upload signing keys to a public repo. Production signing is not implemented.", color = TextSoft)
         }
         ContentPanel {
-            Text("BuildDeck v0.3.1 • Source Import Guard", fontWeight = FontWeight.Bold)
+            Text("BuildDeck v0.3.2 • APK Vault Handoff", fontWeight = FontWeight.Bold)
             Text("Source ZIP validation prevents building APK resources as source. GitHub change review, rollback, and local builds remain available. Direct remote ChatGPT phone access is not enabled.", color = TextSoft)
         }
     }
