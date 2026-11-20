@@ -51,11 +51,13 @@ class OutputCollector(private val context: Context) {
                 file.isFile && file.name?.endsWith(".apk", true) == true
             } } catch (_: Exception) { /* continue */ }
         }
+        val readyBefore = ai.buildRecords().count { it.status == "READY" }
         val updated = reconcile(store, ai)
+        val readyAfter = ai.buildRecords().count { it.status == "READY" }
         val stillPending = ai.buildRecords().count { it.status == "SUCCESS_NEEDS_IMPORT" }
         return when {
-            updated && stillPending == 0 -> "Success! Completed APKs imported into Vault. Open Releases."
-            updated -> "Out scan completed. $stillPending builds still need import; see Build Requests."
+            readyAfter > readyBefore -> "Success! Imported ${readyAfter - readyBefore} APK(s) into Vault. Open Releases."
+            updated -> "Out scan updated build status. $stillPending builds still need import; see Build Requests."
             folders.isEmpty() -> "Selected Out folder is empty. Reconnect the Out folder that contains Termux builds."
             matching.isEmpty() -> "Out is accessible with ${folders.size} project folders, but none match pending builds. Reconnect the correct Out folder."
             found == 0 -> "Project folder found but no matching APK. Reconnect the correct Out folder."
