@@ -57,7 +57,7 @@ fun GitHubImportCard(
 }
 
 @Composable
-fun GitHubProjectCard(link: RepoLink?, working: Boolean, onReview: () -> Unit) {
+fun GitHubProjectCard(link: RepoLink?, working: Boolean, onReview: () -> Unit, onFetch: () -> Unit) {
     if (link == null) return
     Card {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -66,6 +66,9 @@ fun GitHubProjectCard(link: RepoLink?, working: Boolean, onReview: () -> Unit) {
             Text("${link.owner}/${link.repo} • ${link.branch}", fontWeight = FontWeight.Medium)
             Text("Review locally edited text files before committing them. Remote changes are checked for conflicts. No files are pushed automatically.",
                 style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onFetch, enabled = !working, modifier = Modifier.fillMaxWidth()) {
+                Text("Fetch changes from GitHub")
+            }
             Button(onClick = onReview, enabled = !working, modifier = Modifier.fillMaxWidth()) {
                 Text("Review changes for GitHub sync")
             }
@@ -115,6 +118,94 @@ fun GitHubSyncReview(
         confirmButton = {
             Button(enabled = selected.isNotEmpty(), onClick = onCommit) {
                 Text("Commit ${selected.size} files")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+
+/** This dialog reviews code already fetched from GitHub, with no background write access. */
+@Composable
+fun IncomingGithubReview(
+    review: IncomingReview,
+    selected: Set<String>,
+    onSelected: (Set<String>) -> Unit,
+    buildAfter: Boolean,
+    onBuildAfterChanged: (Boolean) -> Unit,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var expanded by remember(review.headSha) { mutableStateOf<Set<String>>(emptySet()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Review incoming GitHub changes") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 450.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("${review.link.owner}/${review.link.repo} • ${review.link.branch}",
+                    fontWeight = FontWeight.Bold)
+                Text("Commit ${review.headSha.take(10)}. Only checked source files are applied. BuildDeck saves a rollback snapshot first. No changes are installed without your approval.",
+                    style = MaterialTheme.typography.bodySmall)
+                if (review.skipped > 0) {
+                    Text("${review.skipped} changed files skipped (restricted formats or review limit). No changes to those files will be applied.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
+                if (review.changes.isEmpty()) Text("No supported upstream changes found. Your project may already be current.")
+                review.changes.forEach { change ->
+                    val allowed = change.conflict == null && change.text != null
+                    Column {
+                        Row {
+                            Checkbox(
+                                checked = change.path in selected,
+                                enabled = allowed,
+                                onCheckedChange = { yes ->
+                                    onSelected(if (yes) selected + change.path else selected - change.path)
+                                }
+                            )
+                            Column(Modifier.padding(top = 6.dp)) {
+                                Text("${change.kind} • ${change.path}", style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold)
+                                if (change.conflict != null) {
+                                    Text(change.conflict, style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error)
+                                }
+                                if (change.text != null) {
+                                    TextButton(onClick = {
+                                        expanded = if (change.path in expanded) expanded - change.path
+                                            else expanded + change.path
+                                    }) { Text(if (change.path in expanded) "Hide incoming source" else "Preview incoming source") }
+                                    if (change.path in expanded) {
+                                        Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+                                            Text(change.text.take(1400), modifier = Modifier.padding(8.dp),
+                                                style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+                if (selected.isNotEmpty()) {
+                    Row {
+                        Checkbox(checked = buildAfter, onCheckedChange = onBuildAfterChanged)
+                        Text("Ask me to confirm an APK build after applying",
+                            modifier = Modifier.padding(top = 12.dp),
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Text("Never approve untrusted build.gradle scripts or source. The app will stop if GitHub or your local files change before applying.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
+        },
+        confirmButton = {
+            Button(enabled = selected.isNotEmpty(), onClick = onApply) {
+                Text("Apply ${selected.size} approved files")
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
