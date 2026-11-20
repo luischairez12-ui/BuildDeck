@@ -1,7 +1,18 @@
-# BuildDeck — Batch 2.6 Studio Automation
+# BuildDeck — Batch 3 GitHub AI Bridge
 
 **Native Android app source.** Batch 2 was built by GitHub Actions and then compiled and installed on the user's OnePlus using Termux. Batch 2.5 changes are currently tested by CI; the one-tap Termux callback and automatic APK transfer still require phone testing.
 
+
+## Batch 3: Reviewed GitHub-to-BuildDeck change handoff (v0.3.0)
+
+- Update code in a GitHub repository through this ChatGPT conversation using the connected GitHub app.
+- In BuildDeck, **import that same repository via GitHub Workspace**; manual ZIP-imported projects are not automatically linked.
+- Open the linked project and select **Fetch changes from GitHub** after a new GitHub commit. BuildDeck compares a pinned commit against the imported baseline and offers a file-by-file review.
+- Changes conflicting with locally edited files cannot be approved; remote deletions and restricted files are skipped. No unreviewed changes are silently applied.
+- Approved files are applied after a rollback snapshot. BuildDeck can then show a **separate APK build confirmation** using the working Termux setup.
+- You can manually share a build log from the Build Requests viewer to help diagnose issues.
+- **No remote ChatGPT phone access yet.** This uses GitHub as a user-controlled source bridge with explicit approvals.
+- [Full setup, limits, and safe on-phone update instructions](docs/BATCH3_GITHUB_AI_BRIDGE.md)
 
 ## Batch 2.6: multi-feature studio update
 
