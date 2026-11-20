@@ -206,6 +206,16 @@ class GitHubWorkspace(private val context: Context, private val store: Store) {
         return uploaded
     }
 
+    /** Narrow, read-only helper for the reviewed incoming GitHub bridge. */
+    internal fun readGitHubJson(path: String): JSONObject =
+        requestJson(path) ?: error("GitHub did not return JSON")
+
+    internal fun readLinkState(project: Project): JSONObject? = load(project)
+
+    internal fun writeLinkState(project: Project, value: JSONObject) = save(project, value)
+
+    internal fun canSyncSource(path: String): Boolean = syncAllowed(path)
+
     private fun syncAllowed(path: String): Boolean {
         val segments = path.split('/')
         val name = segments.last().lowercase()
