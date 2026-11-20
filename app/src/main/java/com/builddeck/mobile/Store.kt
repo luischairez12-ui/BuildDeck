@@ -90,10 +90,23 @@ class Store(private val context: Context) {
             require(count > 0) { "Empty ZIP" }
             val gradleSettings = source.walkTopDown().maxDepth(4)
                 .firstOrNull { it.isFile && (it.name == "settings.gradle" || it.name == "settings.gradle.kts") }
-            val projectRoot = gradleSettings?.parentFile ?: source
+            if (gradleSettings == null) {
+                val isCompiledApk = File(source, "classes.dex").exists() ||
+                    File(source, "resources.arsc").exists() ||
+                    File(source, "classes2.dex").exists()
+                val reason = if (isCompiledApk) {
+                    "This archive looks like a compiled APK, not source code. " +
+                        "Import the APK under Releases, or import the original Gradle repository through GitHub Workspace."
+                } else {
+                    "Missing settings.gradle or settings.gradle.kts. " +
+                        "Import the complete Android Gradle source ZIP, or use GitHub Workspace to import the repository."
+                }
+                error(reason)
+            }
+            val projectRoot = gradleSettings.parentFile ?: source
             val relative = if (projectRoot == source) "" else projectRoot.relativeTo(source).invariantSeparatorsPath
             val display = displayName(uri).substringBeforeLast('.').take(48).ifBlank { "Imported project" }
-            val project = Project(id, projectRoot.name.takeIf { gradleSettings != null && it != "source" } ?: display, relative, System.currentTimeMillis())
+            val project = Project(id, projectRoot.name.takeIf { it != "source" } ?: display, relative, System.currentTimeMillis())
             val index = projects().toMutableList().apply { add(project) }
             saveProjects(index)
             return project
@@ -105,6 +118,11 @@ class Store(private val context: Context) {
 
     fun sourceDir(project: Project): File = File(File(root, project.id), "source").let {
         if (project.rootRelative.isEmpty()) it else File(it, project.rootRelative)
+    }
+
+    fun isGradleProject(project: Project): Boolean {
+        val dir = sourceDir(project)
+        return File(dir, "settings.gradle.kts").isFile || File(dir, "settings.gradle").isFile
     }
 
     fun sourceFiles(project: Project): List<String> {
@@ -226,6 +244,9 @@ class Store(private val context: Context) {
     }
 
     fun handoffForLocalBuild(project: Project): BuildHandoff {
+        require(isGradleProject(project)) {
+            "This project has no Gradle settings file. Import the original source repository through GitHub Workspace; don't import a compiled APK as source."
+        }
         val stamp = System.currentTimeMillis()
         val zipName = "${project.id}_${stamp}.zip"
         val temporary = File(context.cacheDir, zipName)
