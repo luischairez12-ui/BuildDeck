@@ -855,8 +855,8 @@ private fun SettingsPage(outputConnected: Boolean, onConnect: () -> Unit, onDisc
             Text("Only build trusted code. Keep a private, off-device backup of the Termux ~/.android/debug.keystore for future debug updates. Never upload signing keys to a public repo. Production signing is not implemented.", color = TextSoft)
         }
         ContentPanel {
-            Text("BuildDeck v0.3.0 • GitHub AI Bridge", fontWeight = FontWeight.Bold)
-            Text("Fetch approved GitHub source changes, inspect conflicts, apply with rollback, then build on your phone. Build logs can be shared manually. Direct ChatGPT phone access is not enabled.", color = TextSoft)
+            Text("BuildDeck v0.3.1 • Source Import Guard", fontWeight = FontWeight.Bold)
+            Text("Source ZIP validation prevents building APK resources as source. GitHub change review, rollback, and local builds remain available. Direct remote ChatGPT phone access is not enabled.", color = TextSoft)
         }
     }
 }
