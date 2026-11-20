@@ -1,69 +1,72 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# This script is supplied from BuildDeck directly via the Termux intent stdin.
-# Never execute a script from the world-writable Downloads directory.
+# BuildDeck 2.5 local builder. Executes only after the user's approval.
+# Source is transferred through Downloads, never executed from Downloads.
 set -Eeuo pipefail
-id="${1:-}"
-zip_name="${2:-}"
-if [[ ! "$id" =~ ^[a-f0-9-]{36}$ ]] || [[ ! "$zip_name" =~ ^[a-f0-9-]{36}_[0-9]+\.zip$ ]] || [[ "$zip_name" != "$id"_* ]]; then
-  echo "Invalid project identifier/zip name" >&2
+project_id="\${1:-}"
+zip_name="\${2:-}"
+if [[ ! "$project_id" =~ ^[a-f0-9-]{36}$ ]] || [[ ! "$zip_name" =~ ^[a-f0-9-]{36}_[0-9]+\.zip$ ]] || [[ "$zip_name" != "$project_id"_* ]]; then
+  echo "Invalid project id or archive name" >&2
   exit 2
 fi
+
+# Termux RUN_COMMAND launches non-interactive bash; ~/.bashrc may never be loaded.
+# Use verified OnePlus setup paths instead of relying on an interactive shell.
+export PREFIX=/data/data/com.termux/files/usr
+export JAVA_HOME="$PREFIX/lib/jvm/java-17-openjdk"
+export ANDROID_HOME="$HOME/android-sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$JAVA_HOME/bin:$PREFIX/bin:/system/bin:/system/xbin:$PATH"
 inbox="$HOME/storage/downloads/BuildDeck/Inbox/$zip_name"
-out="$HOME/storage/downloads/BuildDeck/Out/$id"
-workspace="$HOME/builddeck/work/$id"
+out="$HOME/storage/downloads/BuildDeck/Out/$project_id"
+workspace="$HOME/builddeck/work/$project_id"
 mkdir -p "$out" "$HOME/builddeck/work"
 log="$out/build_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$log") 2>&1
-# Result marker is consumed by BuildDeck's manually imported log viewer.
-# Never mark success just because a command was started.
 trap 'code=$?; if [ "$code" -eq 0 ]; then echo "BUILDDECK_RESULT=SUCCESS"; else echo "BUILDDECK_RESULT=FAILED (exit $code)"; fi' EXIT
-printf 'BuildDeck local build for %s\n' "$id"
-printf 'Input: %s\n' "$inbox"
-for tool in unzip java find; do
-  if ! command -v "$tool" >/dev/null 2>&1; then echo "Missing Termux tool: $tool"; exit 3; fi
+
+echo "BuildDeck Batch 2.5 local build"
+echo "Input: $inbox"
+echo "Java: $JAVA_HOME"
+echo "SDK: $ANDROID_HOME"
+for tool in unzip java find aapt2; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "Missing tool: $tool"; exit 3; }
 done
-if [ ! -f "$inbox" ]; then echo 'Cannot read source ZIP; grant Termux shared storage access and run termux-setup-storage.'; exit 4; fi
+[ -x "$JAVA_HOME/bin/java" ] || { echo "Java 17 unavailable"; exit 3; }
+[ -f "$ANDROID_HOME/platforms/android-35/android.jar" ] || { echo "Install Android SDK API 35"; exit 7; }
+[ -f "$inbox" ] || { echo "Missing source ZIP; verify Termux storage access"; exit 4; }
 rm -rf -- "$workspace"
 mkdir -p "$workspace"
-# Validate archive member names before extraction; reject absolute, parent, Windows paths.
 if unzip -Z1 "$inbox" | grep -Eq '(^/|(^|/)\.\.(/|$)|\\)'; then
-  echo 'Unsafe ZIP paths detected; aborting.'; exit 5
+  echo "Unsafe ZIP entries"; exit 5
 fi
 unzip -q "$inbox" -d "$workspace"
 root="$workspace"
 if [ ! -f "$root/settings.gradle" ] && [ ! -f "$root/settings.gradle.kts" ]; then
-  candidate="$(find "$workspace" -mindepth 1 -maxdepth 3 -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
-  if [ -n "$candidate" ]; then root="$(dirname "$candidate")"; fi
-fi
-if [ ! -f "$root/settings.gradle" ] && [ ! -f "$root/settings.gradle.kts" ]; then
-  echo 'Project is missing settings.gradle or settings.gradle.kts; import a complete Android Gradle project.'; exit 6
+  candidate="$(find "$workspace" -mindepth 1 -maxdepth 4 -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
+  [ -n "$candidate" ] || { echo "Missing Gradle settings file"; exit 6; }
+  root="$(dirname "$candidate")"
 fi
 cd "$root"
-if [ -z "${ANDROID_HOME:-}" ]; then export ANDROID_HOME="$HOME/android-sdk"; fi
-if [ ! -d "$ANDROID_HOME/platforms" ]; then
-  echo "Android SDK not configured at $ANDROID_HOME; set ANDROID_HOME in Termux."; exit 7
-fi
+
+# Use a project's own wrapper if present; otherwise use the verified Gradle 8.9.
+# A different Android Gradle Plugin may require a different Gradle version.
 if [ -f ./gradlew ]; then
   chmod +x ./gradlew
   cmd=(./gradlew)
+elif [ -x "$HOME/opt/gradle-8.9/bin/gradle" ]; then
+  cmd=("$HOME/opt/gradle-8.9/bin/gradle")
 elif command -v gradle >/dev/null 2>&1; then
   cmd=(gradle)
 else
-  echo 'Neither a Gradle wrapper nor a system Gradle executable was found.'; exit 8
+  echo "No compatible Gradle executable found"; exit 8
 fi
-extra=()
-if command -v aapt2 >/dev/null 2>&1; then
-  extra+=("-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)")
-else
-  echo 'Warning: No native Termux aapt2 found; Android builds may fail on ARM devices.'
-fi
-echo "Building from $root"
-"${cmd[@]}" --no-daemon assembleDebug "${extra[@]}"
-found=0
-while IFS= read -r -d '' apk; do
-  found=$((found + 1))
-  cp -f -- "$apk" "$out/$(date +%Y%m%d_%H%M%S)_$(basename "$apk")"
-  echo "APK ready in: $out"
-done < <(find "$root" -type f -path '*/build/outputs/apk/*' -name '*.apk' -print0)
-if [ "$found" -eq 0 ]; then echo 'Gradle completed but no APK was found; check build configuration.'; exit 9; fi
-echo "Build successful. Import APK from Downloads/BuildDeck/Out/$id into BuildDeck Releases."
+
+echo "Running: \${cmd[0]} --no-daemon --max-workers=2 assembleDebug"
+"\${cmd[@]}" --no-daemon --max-workers=2 assembleDebug "-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)"
+apk="$(find "$root" -type f -path '*/build/outputs/apk/debug/*.apk' -name '*.apk' -print -quit)"
+[ -n "$apk" ] && [ -s "$apk" ] || { echo "Gradle completed without an APK"; exit 9; }
+dest="$out/$(date +%Y%m%d_%H%M%S)_$(basename "$apk")"
+cp -f -- "$apk" "$dest"
+echo "BUILDDECK_APK=$dest"
+echo "APK ready in Downloads/BuildDeck/Out/$project_id"
+echo "Signing: Gradle debug.keystore in Termux ~/.android/ (keep a private backup)."
