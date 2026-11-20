@@ -1,0 +1,22 @@
+# Local Android build artifacts and secrets
+.gradle/
+.idea/
+**/build/
+local.properties
+*.iml
+*.jks
+*.keystore
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+secrets.properties
+keystore.properties
+**/captures/
+.DS_Store
+__pycache__/
+*.py[cod]
+bridge/outgoing/
+bridge/workspace/

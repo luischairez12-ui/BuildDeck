@@ -1,0 +1,607 @@
+package com.builddeck.mobile
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+private val Night = Color(0xFF0B111D)
+private val Panel = Color(0xFF151F31)
+private val Accent = Color(0xFF78D9F8)
+private val TextSoft = Color(0xFFB1C0D3)
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val store = Store(this)
+        setContent { BuildDeckApp(store) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BuildDeckApp(store: Store) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var projects by remember { mutableStateOf(store.projects()) }
+    var releases by remember { mutableStateOf(store.releases()) }
+    var section by remember { mutableStateOf("Projects") }
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    var editorPath by remember { mutableStateOf<String?>(null) }
+    var editorText by remember { mutableStateOf("") }
+    var pendingBuild by remember { mutableStateOf<Project?>(null) }
+    var buildConfirm by remember { mutableStateOf<Project?>(null) }
+    var restoreConfirm by remember { mutableStateOf<Pair<Project, Snapshot>?>(null) }
+    var exportProject by remember { mutableStateOf<Project?>(null) }
+    var importApkFor by remember { mutableStateOf<Project?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val aiControl = remember(store) { AiControlStore(context, store) }
+    var accessRevision by remember { mutableIntStateOf(0) }
+    var patchForProject by remember { mutableStateOf<Project?>(null) }
+    var patchReview by remember { mutableStateOf<PatchBundle?>(null) }
+    var patchPreviews by remember { mutableStateOf<List<PatchPreview>>(emptyList()) }
+    var patchSelected by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var logForBuild by remember { mutableStateOf<BuildRecord?>(null) }
+    var visibleLog by remember { mutableStateOf<String?>(null) }
+    var buildRevision by remember { mutableIntStateOf(0) }
+
+    fun notify(message: String) { Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
+    fun reload() { projects = store.projects(); releases = store.releases() }
+
+    fun executeLocalBuild(project: Project) {
+        scope.launch {
+            busy = true
+            try {
+                val handoff = withContext(Dispatchers.IO) { store.handoffForLocalBuild(project) }
+                TermuxBridge.start(context, handoff)
+                aiControl.recordBuild(project)
+                buildRevision++
+                notify("Build submitted to Termux. Import its log afterward for a confirmed status.")
+            } catch (ex: Exception) {
+                notify("Build couldn't start: ${ex.message}")
+            } finally { busy = false }
+        }
+    }
+
+    val termuxPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val project = pendingBuild
+        pendingBuild = null
+        if (granted && project != null) executeLocalBuild(project)
+        else notify("Grant Termux command permission in BuildDeck's app settings to enable local builds.")
+    }
+    val zipPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            busy = true
+            try {
+                val project = withContext(Dispatchers.IO) { store.importProject(uri) }
+                reload(); section = "Projects"; selectedId = project.id
+                notify("Imported ${project.name}")
+            } catch (ex: Exception) { notify("Import failed: ${ex.message}") }
+            finally { busy = false }
+        }
+    }
+    val apkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val project = importApkFor
+        importApkFor = null
+        if (uri != null && project != null) scope.launch {
+            busy = true
+            try {
+                withContext(Dispatchers.IO) { store.importRelease(project, uri) }
+                reload(); notify("APK added to your release library")
+            } catch (ex: Exception) { notify("APK import failed: ${ex.message}") }
+            finally { busy = false }
+        }
+    }
+    val patchPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val project = patchForProject
+        patchForProject = null
+        if (uri != null && project != null) scope.launch {
+            busy = true
+            try {
+                val (bundle, previews) = withContext(Dispatchers.IO) {
+                    val bundle = aiControl.readPatch(uri, project)
+                    bundle to aiControl.preview(project, bundle)
+                }
+                patchReview = bundle
+                patchPreviews = previews
+                patchSelected = previews.filter { it.conflict == null }.map { it.index }.toSet()
+            } catch (ex: Exception) { notify("Cannot review AI patch: ${ex.message}") }
+            finally { busy = false }
+        }
+    }
+    val logPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val record = logForBuild
+        logForBuild = null
+        if (uri != null && record != null) scope.launch {
+            busy = true
+            try {
+                val updated = withContext(Dispatchers.IO) { aiControl.importBuildLog(record.id, uri) }
+                buildRevision++
+                notify("Log imported. Status: ${updated.status}. Only a success marker confirms completion.")
+            } catch (ex: Exception) { notify("Log import failed: ${ex.message}") }
+            finally { busy = false }
+        }
+    }
+    val exportPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val project = exportProject
+        exportProject = null
+        if (uri != null && project != null) scope.launch {
+            busy = true
+            try {
+                withContext(Dispatchers.IO) { store.exportSource(project, uri) }
+                notify("Project exported as a ZIP")
+            } catch (ex: Exception) { notify("Export failed: ${ex.message}") }
+            finally { busy = false }
+        }
+    }
+
+    fun requestBuild(project: Project) {
+        if (ContextCompat.checkSelfPermission(context, "com.termux.permission.RUN_COMMAND") == PackageManager.PERMISSION_GRANTED) {
+            executeLocalBuild(project)
+        } else {
+            pendingBuild = project
+            termuxPermission.launch("com.termux.permission.RUN_COMMAND")
+        }
+    }
+
+    fun installRelease(release: Release) {
+        try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(release.path))
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (ex: Exception) { notify("Unable to open APK: ${ex.message}") }
+    }
+
+    val colors = darkColorScheme(
+        primary = Accent,
+        onPrimary = Night,
+        background = Night,
+        surface = Panel,
+        surfaceVariant = Color(0xFF1E2A3E),
+        onSurface = Color.White,
+        onBackground = Color.White,
+        secondary = Color(0xFFA7A5FF)
+    )
+
+    MaterialTheme(colorScheme = colors) {
+        Scaffold(
+            containerColor = Night,
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text("BUILDDECK", fontWeight = FontWeight.ExtraBold)
+                            Text("PRIVATE DEVELOPMENT STUDIO", style = MaterialTheme.typography.labelSmall, color = TextSoft)
+                        }
+                    },
+                    navigationIcon = {
+                        if (editorPath != null || selectedId != null) {
+                            TextButton(onClick = {
+                                if (editorPath != null) editorPath = null else selectedId = null
+                            }) { Text("‹ Back") }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Night)
+                )
+            },
+            bottomBar = {
+                if (editorPath == null && selectedId == null) {
+                    NavigationBar(containerColor = Panel) {
+                        listOf("Projects", "Releases", "Settings").forEachIndexed { index, tab ->
+                            NavigationBarItem(
+                                selected = section == tab,
+                                onClick = { section = tab },
+                                icon = { Text(listOf("▦", "⬡", "⚙")[index]) },
+                                label = { Text(tab) }
+                            )
+                        }
+                    }
+                }
+            }
+        ) { inner ->
+            Box(Modifier.padding(inner).fillMaxSize()) {
+                val project = projects.firstOrNull { it.id == selectedId }
+                when {
+                    project != null && editorPath != null -> {
+                        SourceEditor(
+                            path = editorPath!!,
+                            content = editorText,
+                            onChange = { editorText = it },
+                            onSave = {
+                                try { store.saveText(project, editorPath!!, editorText); notify("File saved") }
+                                catch (ex: Exception) { notify("Save failed: ${ex.message}") }
+                            }
+                        )
+                    }
+                    project != null -> {
+                        ProjectDetail(
+                            project = project,
+                            filePaths = remember(project.id, projects) { store.sourceFiles(project) },
+                            releases = releases.filter { it.projectId == project.id },
+                            snapshots = store.snapshots(project),
+                            access = run { accessRevision; aiControl.access(project) },
+                            buildRecords = run { buildRevision; aiControl.buildRecords(project.id) },
+                            onAccessChanged = { policy ->
+                                try { aiControl.setAccess(project, policy); accessRevision++ }
+                                catch (ex: Exception) { notify("Couldn't save permissions: ${ex.message}") }
+                            },
+                            onImportPatch = {
+                                patchForProject = project
+                                patchPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            },
+                            onLogImport = { record ->
+                                logForBuild = record
+                                logPicker.launch(arrayOf("text/plain", "application/octet-stream", "*/*"))
+                            },
+                            onViewLog = { record ->
+                                try { visibleLog = aiControl.buildLog(record) }
+                                catch (ex: Exception) { notify("Cannot read log: ${ex.message}") }
+                            },
+                            onRestore = { snapshot -> restoreConfirm = project to snapshot },
+                            onEdit = { path ->
+                                try { editorText = store.readText(project, path); editorPath = path }
+                                catch (ex: Exception) { notify("Cannot open file: ${ex.message}") }
+                            },
+                            onBuild = { buildConfirm = project },
+                            onSaveSnapshot = {
+                                scope.launch {
+                                    busy = true
+                                    try { withContext(Dispatchers.IO) { store.saveSnapshot(project) }; reload(); notify("Private source snapshot saved") }
+                                    catch (ex: Exception) { notify("Snapshot failed: ${ex.message}") }
+                                    finally { busy = false }
+                                }
+                            },
+                            onExport = { exportProject = project; exportPicker.launch("${project.name}.zip") },
+                            onImportApk = { importApkFor = project; apkPicker.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*")) },
+                            onInstall = ::installRelease
+                        )
+                    }
+                    section == "Projects" -> ProjectHome(projects, releases.size,
+                        onImport = { zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*")) },
+                        onSelect = { selectedId = it.id }
+                    )
+                    section == "Releases" -> ReleaseHome(releases, projects, onSelect = { selectedId = it }, onInstall = ::installRelease)
+                    else -> SettingsPage()
+                }
+                if (busy) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter))
+                }
+            }
+        }
+
+        if (patchReview != null) {
+            val bundle = patchReview!!
+            val selectedProject = projects.firstOrNull { it.id == selectedId }
+            if (selectedProject != null) PatchReviewDialog(
+                bundle = bundle,
+                previews = patchPreviews,
+                selected = patchSelected,
+                onSelected = { patchSelected = it },
+                onDismiss = { patchReview = null },
+                onApply = {
+                    patchReview = null
+                    scope.launch {
+                        busy = true
+                        try {
+                            val snapshot = withContext(Dispatchers.IO) {
+                                aiControl.applyPatch(selectedProject, bundle, patchSelected)
+                            }
+                            reload()
+                            notify("Patch applied; rollback snapshot: ${snapshot.name}")
+                            if (bundle.requestBuild && aiControl.access(selectedProject).build) {
+                                buildConfirm = selectedProject
+                            } else if (bundle.requestBuild) {
+                                notify("Build request held: enable AI build permission to allow requesting a build.")
+                            }
+                        } catch (ex: Exception) { notify("Patch failed: ${ex.message}") }
+                        finally { busy = false }
+                    }
+                }
+            )
+        }
+        if (visibleLog != null) AlertDialog(
+            onDismissRequest = { visibleLog = null },
+            title = { Text("Build log") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text(visibleLog ?: "", style = MaterialTheme.typography.labelSmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = { visibleLog = null }) { Text("Close") } }
+        )
+
+        if (restoreConfirm != null) AlertDialog(
+            onDismissRequest = { restoreConfirm = null },
+            title = { Text("Restore this source snapshot?") },
+            text = { Text("This will replace the current project source files. BuildDeck saves a safety snapshot of your current files before restoring.") },
+            confirmButton = {
+                Button(onClick = {
+                    val (p, snap) = restoreConfirm!!
+                    restoreConfirm = null
+                    scope.launch {
+                        busy = true
+                        try { withContext(Dispatchers.IO) { store.restoreSnapshot(p, snap) }; reload(); notify("Source snapshot restored") }
+                        catch (ex: Exception) { notify("Restore failed: ${ex.message}") }
+                        finally { busy = false }
+                    }
+                }) { Text("Restore version") }
+            },
+            dismissButton = { TextButton(onClick = { restoreConfirm = null }) { Text("Cancel") } }
+        )
+
+        if (buildConfirm != null) AlertDialog(
+            onDismissRequest = { buildConfirm = null },
+            title = { Text("Run this project's build?") },
+            text = { Text("BuildDeck will send a copy of the source project to Termux. Gradle build scripts can execute code. Only build projects you trust. Termux, an Android SDK and compatible build tools must be installed first.") },
+            confirmButton = {
+                Button(onClick = {
+                    val selected = buildConfirm!!
+                    buildConfirm = null
+                    requestBuild(selected)
+                }) { Text("Build on phone") }
+            },
+            dismissButton = { TextButton(onClick = { buildConfirm = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+@Composable
+private fun ProjectHome(projects: List<Project>, releases: Int, onImport: () -> Unit, onSelect: (Project) -> Unit) {
+    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            Text("Your app universe.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("Every project, every version, all in one private place.", color = TextSoft)
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Metric("PROJECTS", "${projects.size}", Modifier.weight(1f))
+                Metric("APK LIBRARY", "$releases", Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = onImport, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("+  Import source project ZIP") }
+            Text("Your sources stay on this device unless you explicitly export them.", style = MaterialTheme.typography.bodySmall, color = TextSoft, modifier = Modifier.padding(top = 10.dp))
+            Spacer(Modifier.height(18.dp))
+            Text("MY PROJECTS", style = MaterialTheme.typography.labelLarge, color = Accent)
+        }
+        if (projects.isEmpty()) {
+            item { ContentPanel { Text("No projects yet. Import an Android Gradle project ZIP to get started.", color = TextSoft) } }
+        } else {
+            items(projects, key = { it.id }) { project ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { onSelect(project) },
+                    colors = CardDefaults.cardColors(containerColor = Panel),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = RoundedCornerShape(14.dp), color = Color(0xFF203E4D)) {
+                            Text("⌘", style = MaterialTheme.typography.headlineMedium, color = Accent, modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp))
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(project.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("Local project  •  ${formatDate(project.created)}", color = TextSoft, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("›", style = MaterialTheme.typography.headlineSmall, color = Accent)
+                    }
+                }
+            }
+        }
+        item { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+@Composable
+private fun Metric(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier, colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.padding(16.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = TextSoft)
+            Text(value, style = MaterialTheme.typography.headlineLarge, color = Accent, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun ProjectDetail(
+    project: Project, filePaths: List<String>, releases: List<Release>, snapshots: List<Snapshot>,
+    access: AiAccess, buildRecords: List<BuildRecord>,
+    onAccessChanged: (AiAccess) -> Unit,
+    onImportPatch: () -> Unit,
+    onLogImport: (BuildRecord) -> Unit,
+    onViewLog: (BuildRecord) -> Unit,
+    onRestore: (Snapshot) -> Unit,
+    onEdit: (String) -> Unit, onBuild: () -> Unit, onSaveSnapshot: () -> Unit,
+    onExport: () -> Unit, onImportApk: () -> Unit, onInstall: (Release) -> Unit
+) {
+    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Text(project.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("SOURCE WORKSPACE", style = MaterialTheme.typography.labelMedium, color = Accent)
+            Spacer(Modifier.height(14.dp))
+            Button(onClick = onBuild, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("⚡  BUILD APK ON THIS PHONE") }
+            Text("Experimental: uses your configured Termux build environment, not GitHub.", color = TextSoft, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onSaveSnapshot, modifier = Modifier.weight(1f)) { Text("Save version") }
+                OutlinedButton(onClick = onExport, modifier = Modifier.weight(1f)) { Text("Export ZIP") }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("SOURCE FILES (${filePaths.size})", style = MaterialTheme.typography.labelMedium, color = Accent)
+            Text("Tap a text file to edit it. Saving changes updates your next build.", color = TextSoft, style = MaterialTheme.typography.bodySmall)
+        }
+        item {
+            AiProjectControls(access, onAccessChanged, onImportPatch)
+            Spacer(Modifier.height(12.dp))
+            BuildRequestHistory(buildRecords, onLogImport, onViewLog)
+            Spacer(Modifier.height(12.dp))
+        }
+        if (filePaths.isEmpty()) item { ContentPanel { Text("No editable text files found.", color = TextSoft) } }
+        items(filePaths.take(150), key = { it }) { path ->
+            ContentPanel {
+                Row(Modifier.fillMaxWidth().clickable { onEdit(path) }, verticalAlignment = Alignment.CenterVertically) {
+                    Text("⌁", color = Accent)
+                    Spacer(Modifier.width(10.dp))
+                    Text(path, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("Edit ›", color = Accent, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        item {
+            Spacer(Modifier.height(8.dp))
+            Text("SAVED VERSIONS (${snapshots.size})", style = MaterialTheme.typography.labelMedium, color = Accent)
+        }
+        items(snapshots.take(20), key = { it.fileName }) { snapshot ->
+            ContentPanel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Source snapshot", fontWeight = FontWeight.Medium)
+                        Text(formatDate(snapshot.created), style = MaterialTheme.typography.bodySmall, color = TextSoft)
+                    }
+                    TextButton(onClick = { onRestore(snapshot) }) { Text("Restore") }
+                }
+            }
+        }
+        item {
+            Text("RELEASES (${releases.size})", style = MaterialTheme.typography.labelMedium, color = Accent)
+            OutlinedButton(onClick = onImportApk, modifier = Modifier.fillMaxWidth()) { Text("+ Import a built APK") }
+        }
+        items(releases, key = { it.id }) { release ->
+            ContentPanel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(release.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(formatDate(release.added), color = TextSoft, style = MaterialTheme.typography.bodySmall)
+                    }
+                    TextButton(onClick = { onInstall(release) }) { Text("Install") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceEditor(path: String, content: String, onChange: (String) -> Unit, onSave: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("CODE EDITOR", color = Accent, style = MaterialTheme.typography.labelMedium)
+        Text(path, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = content,
+            onValueChange = onChange,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            textStyle = MaterialTheme.typography.bodySmall,
+            label = { Text("Source") },
+            singleLine = false
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("Save file") }
+    }
+}
+
+@Composable
+private fun ReleaseHome(releases: List<Release>, projects: List<Project>, onSelect: (String) -> Unit, onInstall: (Release) -> Unit) {
+    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Text("APK Vault", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("Your private installable release library.", color = TextSoft)
+            Spacer(Modifier.height(10.dp))
+        }
+        if (releases.isEmpty()) item { ContentPanel { Text("No APKs saved. Open a project to import a finished APK.", color = TextSoft) } }
+        items(releases, key = { it.id }) { release ->
+            ContentPanel {
+                Text(release.name, fontWeight = FontWeight.SemiBold)
+                Text(projects.find { it.id == release.projectId }?.name ?: "Unknown project", color = TextSoft, style = MaterialTheme.typography.bodySmall)
+                Row {
+                    TextButton(onClick = { onInstall(release) }) { Text("Install APK") }
+                    TextButton(onClick = { onSelect(release.projectId) }) { Text("View project") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsPage() {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Build engine", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Offline-first • No account • No subscription • GitHub optional", color = TextSoft)
+        ContentPanel {
+            Text("LOCAL BUILDER REQUIREMENTS", fontWeight = FontWeight.Bold, color = Accent)
+            Spacer(Modifier.height(8.dp))
+            Text("1. Install Termux from an official maintained distribution.")
+            Text("2. In Termux, run termux-setup-storage and configure OpenJDK, Android SDK, Gradle and ARM-compatible aapt2.")
+            Text("3. Set allow-external-apps=true in ~/.termux/termux.properties.")
+            Text("4. Grant BuildDeck permission to run Termux commands in Android Settings.")
+            Text("5. Import a complete Gradle project ZIP, open it, then tap Build APK.")
+            Text("6. When the build finishes, import its APK from Downloads/BuildDeck/Out/ into that project's release library.", color = TextSoft)
+        }
+        ContentPanel {
+            Text("Important", fontWeight = FontWeight.Bold)
+            Text("Build scripts can run arbitrary code in Termux. Only build trusted sources. Signing release APKs with a persistent private key is a later feature; Batch 1 uses debug APKs.", color = TextSoft)
+        }
+        ContentPanel {
+            Text("BuildDeck v0.2 • Batch 2", fontWeight = FontWeight.Bold)
+            Text("AI access controls, approval-first patch inbox, source diffs, build requests and imported build logs. AI does not connect automatically.", color = TextSoft)
+        }
+    }
+}
+
+@Composable
+private fun ContentPanel(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color(0xFF293A51)),
+        modifier = Modifier.fillMaxWidth()
+    ) { Column(Modifier.padding(15.dp), content = content) }
+}
+
+private fun formatDate(timestamp: Long): String = SimpleDateFormat("MMM d, yyyy", Locale.US).format(Date(timestamp))
+
+private object TermuxBridge {
+    fun start(context: Context, handoff: BuildHandoff) {
+        val script = context.assets.open("termux_builder.sh").bufferedReader().use { it.readText() }
+        val intent = Intent("com.termux.RUN_COMMAND").apply {
+            setClassName("com.termux", "com.termux.app.RunCommandService")
+            putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
+            putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-s", "--", handoff.projectId, handoff.zipName))
+            putExtra("com.termux.RUN_COMMAND_STDIN", script)
+            putExtra("com.termux.RUN_COMMAND_BACKGROUND", false)
+            putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "BuildDeck Android build")
+        }
+        context.startService(intent) ?: error("Termux service not available. Install/configure Termux first.")
+    }
+}
