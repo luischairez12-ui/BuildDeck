@@ -350,6 +350,12 @@ fun BuildDeckApp(store: Store) {
                                 catch (ex: Exception) { notify("Cannot open file: ${ex.message}") }
                             },
                             onBuild = { buildConfirm = project },
+                            sourceReady = store.isGradleProject(project),
+                            onOpenGitHubImport = {
+                                selectedId = null
+                                editorPath = null
+                                section = "Projects"
+                            },
                             outputConnected = outputConnected,
                             onConnectOutput = { outputPicker.launch(null) },
                             repoLink = run { githubRevision; githubWorkspace.link(project) },
@@ -665,6 +671,7 @@ private fun ProjectDetail(
     onViewLog: (BuildRecord) -> Unit,
     onRestore: (Snapshot) -> Unit,
     onEdit: (String) -> Unit, onBuild: () -> Unit, onSaveSnapshot: () -> Unit,
+    sourceReady: Boolean, onOpenGitHubImport: () -> Unit,
     outputConnected: Boolean, onConnectOutput: () -> Unit,
     repoLink: RepoLink?, onReviewSync: () -> Unit, onFetchGitHub: () -> Unit,
     onDismissBuild: (BuildRecord) -> Unit,
@@ -675,8 +682,22 @@ private fun ProjectDetail(
             Text(project.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text("SOURCE WORKSPACE", style = MaterialTheme.typography.labelMedium, color = Accent)
             Spacer(Modifier.height(14.dp))
-            Button(onClick = onBuild, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("⚡  BUILD APK ON THIS PHONE") }
-            Text("One-tap local build: Gradle 8.9 + SDK 35 + ARM AAPT2. Results return to Build Requests.", color = TextSoft, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+            Button(onClick = onBuild, enabled = sourceReady,
+                modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("⚡  BUILD APK ON THIS PHONE") }
+            if (sourceReady) {
+                Text("Source verified: Gradle settings file found. One-tap build uses Gradle 8.9 + SDK 35 + ARM AAPT2.",
+                    color = TextSoft, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 8.dp))
+            } else {
+                Text("SOURCE IMPORT NEEDS REPAIR", color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+                Text("This project is missing settings.gradle or settings.gradle.kts. It may contain a compiled APK instead of the original Android source. Import the actual repository rather than rebuilding this archive.",
+                    color = TextSoft, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = onOpenGitHubImport, modifier = Modifier.fillMaxWidth()) {
+                    Text("Go to GitHub source import")
+                }
+            }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(onClick = onSaveSnapshot, modifier = Modifier.weight(1f)) { Text("Save version") }
