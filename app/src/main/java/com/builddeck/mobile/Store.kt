@@ -36,6 +36,14 @@ class Store(private val context: Context) {
         }.getOrNull()
     }.sortedByDescending { it.created }
 
+    fun renameProject(project: Project, newName: String): Project {
+        val renamed = project.copy(name = newName.trim().take(60))
+        require(renamed.name.isNotBlank())
+        val projects = projects().map { if (it.id == project.id) renamed else it }
+        saveProjects(projects)
+        return renamed
+    }
+
     fun releases(projectId: String? = null): List<Release> = readArray(releaseIndex).mapNotNull { item ->
         runCatching {
             Release(item.getString("id"), item.getString("projectId"), item.getString("name"), item.getString("path"), item.getLong("added"))
