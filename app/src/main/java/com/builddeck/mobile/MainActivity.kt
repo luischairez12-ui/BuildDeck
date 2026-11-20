@@ -323,7 +323,7 @@ fun BuildDeckApp(store: Store) {
                     project != null -> {
                         ProjectDetail(
                             project = project,
-                            filePaths = remember(project.id, projects) { store.sourceFiles(project) },
+                            filePaths = remember(project.id, projects, githubRevision) { store.sourceFiles(project) },
                             releases = releases.filter { it.projectId == project.id },
                             snapshots = store.snapshots(project),
                             access = run { accessRevision; aiControl.access(project) },
