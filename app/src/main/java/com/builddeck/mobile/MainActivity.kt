@@ -155,6 +155,35 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         }
     }
 
+    // Observe actual Termux progress. Never invent a percentage or mark a build
+    // successful until the verified Termux PendingIntent callback arrives.
+    LaunchedEffect(context) {
+        var lastSignature = ""
+        while (true) {
+            delay(1300)
+            val activity = context as? ComponentActivity
+            if (activity?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) != true) continue
+            val records = aiControl.buildRecords()
+            val active = records.filter { it.status in setOf("SUBMITTED", "RUNNING") &&
+                System.currentTimeMillis() - it.submittedAt < 2L * 60 * 60 * 1000 }
+            for (record in active) {
+                val stage = BuildTransferProvider.stage(context, record.id)
+                if (!stage.isNullOrBlank() && record.note != stage) {
+                    aiControl.updateBuildProgress(record.id, "RUNNING", stage)
+                }
+            }
+            val current = aiControl.buildRecords()
+            val signature = current.take(60).joinToString("|") {
+                it.id + ":" + it.status + ":" + it.note
+            }
+            if (signature != lastSignature || active.isNotEmpty()) {
+                buildRevision++
+                reload()
+                lastSignature = signature
+            }
+        }
+    }
+
     fun executeLocalBuild(project: Project) {
         scope.launch {
             busy = true
@@ -270,6 +299,33 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         } else {
             pendingBuild = project
             termuxPermission.launch("com.termux.permission.RUN_COMMAND")
+        }
+    }
+
+    fun checkGithubUpdates(project: Project) {
+        if (githubWorkspace.link(project) == null) {
+            section = "Projects"
+            selectedId = null
+            notify("Link your project to GitHub first, then check source updates.")
+            return
+        }
+        scope.launch {
+            busy = true
+            try {
+                val review = withContext(Dispatchers.IO) { incomingBridge.check(project) }
+                if (review.changes.isEmpty() && review.skipped == 0) {
+                    notify("GitHub is up to date. Your local source needs no changes.")
+                } else {
+                    incomingProject = project
+                    incomingReview = review
+                    incomingSelected = review.changes
+                        .filter { it.conflict == null && it.text != null }
+                        .map { it.path }.toSet()
+                    incomingBuildAfter = true
+                }
+            } catch (error: Exception) {
+                notify("GitHub check failed: " + error.message)
+            } finally { busy = false }
         }
     }
 
@@ -411,22 +467,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                                 }
                             },
                             repoLink = run { githubRevision; githubWorkspace.link(project) },
-                            onFetch = {
-                                scope.launch {
-                                    busy = true
-                                    try {
-                                        val review = withContext(Dispatchers.IO) { incomingBridge.check(project) }
-                                        incomingProject = project
-                                        incomingReview = review
-                                        incomingSelected = review.changes
-                                            .filter { it.conflict == null && it.text != null }
-                                            .map { it.path }.toSet()
-                                        incomingBuildAfter = true
-                                    } catch (error: Exception) {
-                                        notify("GitHub fetch failed: ${error.message}")
-                                    } finally { busy = false }
-                                }
-                            },
+                            onFetch = { checkGithubUpdates(project) },
                             onSync = {
                                 scope.launch {
                                     busy = true
@@ -466,7 +507,8 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         onProjects = { section = "Projects" },
                         onBuilds = { section = "Builds" },
                         onVault = { section = "Vault" },
-                        onGitHub = { section = "Projects" },
+                        onGitHub = { projects.firstOrNull()?.let { checkGithubUpdates(it) }
+                            ?: run { section = "Projects" } },
                         onImport = { zipPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }
                     )
                     section == "Projects" -> NovaProjects(projects, releases.size,
@@ -509,7 +551,10 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         projects = projects,
                         records = run { buildRevision; aiControl.buildRecords() },
                         outputConnected = outputConnected,
+                        githubLinkedProjects = projects.filter { githubWorkspace.link(it) != null }
+                            .map { it.id }.toSet(),
                         onBuild = { project -> buildConfirm = project },
+                        onCheckGitHub = { project -> checkGithubUpdates(project) },
                         onImportApk = { project ->
                             importApkFor = project
                             apkPicker.launch(arrayOf("application/vnd.android.package-archive",
@@ -526,6 +571,11 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         onDismiss = { record ->
                             aiControl.dismissBuild(record.id)
                             buildRevision++
+                        },
+                        onClearCompleted = { project ->
+                            val removed = aiControl.clearCompletedHistory(project.id)
+                            buildRevision++
+                            notify("Cleared $removed finished history entries. APK Vault stays intact.")
                         },
                         onScan = {
                             scope.launch {
