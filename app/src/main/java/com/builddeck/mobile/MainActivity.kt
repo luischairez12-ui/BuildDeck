@@ -80,6 +80,9 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
     val scope = rememberCoroutineScope()
     var projects by remember { mutableStateOf(store.projects()) }
     var releases by remember { mutableStateOf(store.releases()) }
+    var archivedProjects by remember { mutableStateOf(store.archivedProjects()) }
+    var cleanupOpen by remember { mutableStateOf(false) }
+    var archiveRestoreOpen by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf("Projects") }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var editorPath by remember { mutableStateOf<String?>(null) }
@@ -115,7 +118,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
     var buildRevision by remember { mutableIntStateOf(0) }
 
     fun notify(message: String) { Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
-    fun reload() { projects = store.projects(); releases = store.releases() }
+    fun reload() { projects = store.projects(); releases = store.releases(); archivedProjects = store.archivedProjects() }
 
     // A Termux callback can arrive while BuildDeck is in the background.
     // Refresh local build status/release cards on returning to the app.
@@ -440,6 +443,9 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         )
                     }
                     section == "Projects" -> ProjectHome(projects, releases.size,
+                        archivedCount = archivedProjects.size,
+                        onCleanup = { cleanupOpen = true },
+                        onRestoreArchive = { archiveRestoreOpen = true },
                         githubAccount = githubAccount, githubBusy = busy,
                         onGitHubConnect = { token ->
                             scope.launch {
@@ -485,6 +491,58 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter))
                 }
             }
+        }
+
+        if (cleanupOpen && projects.size > 1) {
+            ProjectCleanupDialog(
+                choices = projects.map { source ->
+                    ProjectCleanupChoice(source, store.isGradleProject(source),
+                        githubWorkspace.link(source) != null)
+                },
+                onDismiss = { cleanupOpen = false },
+                onArchive = { keeperId, buildAfter ->
+                    cleanupOpen = false
+                    scope.launch {
+                        busy = true
+                        try {
+                            val count = withContext(Dispatchers.IO) {
+                                store.archiveOtherProjects(keeperId)
+                            }
+                            reload()
+                            val kept = projects.firstOrNull { it.id == keeperId }
+                            selectedId = keeperId
+                            notify("Archived $count older project copies. Your APKs are preserved.")
+                            if (buildAfter && kept != null) buildConfirm = kept
+                        } catch (error: Exception) {
+                            reload()
+                            notify("Project cleanup needs attention: ${error.message}")
+                        } finally { busy = false }
+                    }
+                }
+            )
+        }
+
+        if (archiveRestoreOpen) {
+            ArchivedProjectsDialog(
+                archived = archivedProjects,
+                onDismiss = { archiveRestoreOpen = false },
+                onRestore = { id ->
+                    archiveRestoreOpen = false
+                    scope.launch {
+                        busy = true
+                        try {
+                            val restored = withContext(Dispatchers.IO) {
+                                store.restoreArchivedProject(id)
+                            }
+                            reload()
+                            selectedId = restored.id
+                            notify("Restored ${restored.name} from the local archive")
+                        } catch (error: Exception) {
+                            notify("Restore failed: ${error.message}")
+                        } finally { busy = false }
+                    }
+                }
+            )
         }
 
         val currentIncoming = incomingReview
@@ -687,6 +745,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
 @Composable
 private fun ProjectHome(
     projects: List<Project>, releases: Int, onImport: () -> Unit, onSelect: (Project) -> Unit,
+    archivedCount: Int, onCleanup: () -> Unit, onRestoreArchive: () -> Unit,
     githubAccount: String?, githubBusy: Boolean,
     onGitHubConnect: (String) -> Unit, onGitHubDisconnect: () -> Unit,
     onGitHubImport: (String, String) -> Unit
@@ -704,6 +763,18 @@ private fun ProjectHome(
             Button(onClick = onImport, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("+  Import source project ZIP") }
             Text("Your sources stay on this device unless you explicitly export them.", style = MaterialTheme.typography.bodySmall, color = TextSoft, modifier = Modifier.padding(top = 10.dp))
             Spacer(Modifier.height(18.dp))
+            if (projects.size > 1) {
+                OutlinedButton(onClick = onCleanup, modifier = Modifier.fillMaxWidth()) {
+                    Text("Clean up duplicates • Keep one project")
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+            if (archivedCount > 0) {
+                TextButton(onClick = onRestoreArchive) {
+                    Text("Archived projects ($archivedCount) • Restore")
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             Text("MY PROJECTS", style = MaterialTheme.typography.labelLarge, color = Accent)
         }
         item {
@@ -950,8 +1021,8 @@ private fun SettingsPage(outputConnected: Boolean, onConnect: () -> Unit, onDisc
             Text("Only build trusted code. Keep a private, off-device backup of the Termux ~/.android/debug.keystore for future debug updates. Never upload signing keys to a public repo. Production signing is not implemented.", color = TextSoft)
         }
         ContentPanel {
-            Text("BuildDeck v0.3.3 • File Manager Bridge", fontWeight = FontWeight.Bold)
-            Text("Source ZIP validation prevents building APK resources as source. GitHub change review, rollback, and local builds remain available. Direct remote ChatGPT phone access is not enabled.", color = TextSoft)
+            Text("BuildDeck v0.3.4 • One Project Workspace", fontWeight = FontWeight.Bold)
+            Text("Cleanup lets you keep one GitHub-linked Gradle project, archive extra copies, and restore them later. Vault APKs stay saved. Direct remote ChatGPT phone access is not enabled.", color = TextSoft)
         }
     }
 }
