@@ -26,6 +26,7 @@ internal fun BuildPulseCard(
     stage: String?,
     onViewLog: (() -> Unit)?,
     onImportApk: (() -> Unit)?,
+    onOpenVault: (() -> Unit)? = null,
     compact: Boolean = false
 ) {
     val active = record.status in setOf("SUBMITTED", "RUNNING")
@@ -169,13 +170,17 @@ internal fun BuildPulseCard(
                     }
                 }
             }
-            if (onViewLog != null || (compiled && onImportApk != null)) {
+            if (onViewLog != null || (compiled && onImportApk != null) ||
+                (imported && onOpenVault != null)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (onViewLog != null) TextButton(onClick = onViewLog) {
                         Text("Read build log", color = NovaBlue)
                     }
                     if (compiled && onImportApk != null) TextButton(onClick = onImportApk) {
                         Text("Import APK", color = NovaBlue)
+                    }
+                    if (imported && onOpenVault != null) TextButton(onClick = onOpenVault) {
+                        Text("Open APK Vault", color = NovaBlue)
                     }
                 }
             }
