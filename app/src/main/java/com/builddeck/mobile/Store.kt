@@ -438,6 +438,52 @@ class Store(private val context: Context) {
         }
     }
 
+    /**
+     * Explicit user action: export an APK from BuildDeck's private Vault into the
+     * system Downloads collection. Works with scoped storage on Android 10+.
+     * Never exposes the source directory, keystores, or unrelated app files.
+     */
+    fun exportReleaseToDownloads(release: Release): String {
+        val source = File(release.path).canonicalFile
+        require(source.parentFile == releaseRoot.canonicalFile) { "APK is not in BuildDeck Vault" }
+        require(source.isFile && source.length() in 101L..(500L * 1024 * 1024)) {
+            "APK file is missing or invalid"
+        }
+        source.inputStream().use { input ->
+            require(input.read() == 'P'.code && input.read() == 'K'.code) {
+                "APK archive header is invalid"
+            }
+        }
+        val projectName = projects().firstOrNull { it.id == release.projectId }?.name ?: "AndroidApp"
+        val projectTag = projectName.replace(Regex("[^A-Za-z0-9._-]"), "-")
+            .trim('-').take(40).ifBlank { "AndroidApp" }
+        val version = ApkInspector.inspect(context, source.path)?.version
+            ?.takeIf { it != "unknown" && it.isNotBlank() }
+            ?.replace(Regex("[^A-Za-z0-9._-]"), "-")?.take(24)
+        val name = "$projectTag-${version?.let { "v$it-" } ?: ""}${release.id.take(8)}.apk"
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/vnd.android.package-archive")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: error("Cannot create the APK in Downloads")
+        try {
+            resolver.openOutputStream(uri, "w")?.use { output ->
+                source.inputStream().use { it.copyTo(output) }
+            } ?: error("Cannot write the APK into Downloads")
+            check(resolver.update(uri, ContentValues().apply {
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }, null, null) > 0) { "Cannot finish the Downloads export" }
+            return name
+        } catch (error: Exception) {
+            resolver.delete(uri, null, null)
+            throw error
+        }
+    }
+
     private fun zipSource(project: Project, destination: File) {
         val source = sourceDir(project)
         require(source.isDirectory) { "Project sources missing" }
