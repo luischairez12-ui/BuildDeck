@@ -43,7 +43,17 @@ report_stage() {
 finalize_build() {
   code=$?
   trap - EXIT
-  if [ "$code" -eq 0 ]; then echo "BUILDDECK_RESULT=SUCCESS"; report_stage "Complete"; else echo "BUILDDECK_RESULT=FAILED (exit $code)"; report_stage "Build failed"; fi
+  # Write the authoritative marker directly as well as to tee's stdout.
+  # Process-substitution tee can lag when Android starts the result callback.
+  if [ "$code" -eq 0 ]; then
+    echo "BUILDDECK_RESULT=SUCCESS"
+    printf '%s\n' "BUILDDECK_RESULT=SUCCESS" >> "$log"
+    report_stage "Complete"
+  else
+    echo "BUILDDECK_RESULT=FAILED (exit $code)"
+    printf '%s\n' "BUILDDECK_RESULT=FAILED (exit $code)" >> "$log"
+    report_stage "Build failed"
+  fi
   # Termux's PendingIntent remains authoritative; the authenticated handoff
   # copies the full log to BuildDeck private storage when Android permits it.
   if [[ "$log_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -s "$log" ]; then
@@ -120,7 +130,9 @@ if cp -f -- "$dest" "$friendly"; then
 else
   echo "BUILDDECK_DOWNLOADS_COPY=FAILED - use the APK in BuildDeck/Out"
 fi
-echo "BUILDDECK_APK_SHA256=$(sha256sum "$dest" | awk '{print $1}')"
+apk_sha="$(sha256sum "$dest" | awk '{print $1}')"
+echo "BUILDDECK_APK_SHA256=$apk_sha"
+printf 'BUILDDECK_APK_SHA256=%s\n' "$apk_sha" >> "$log"
 if [[ "$apk_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
   if /system/bin/content write --uri "$apk_uri" < "$dest" >/dev/null 2>&1; then
     echo "BUILDDECK_APK_IMPORTED=YES"
