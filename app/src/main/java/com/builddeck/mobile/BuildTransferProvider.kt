@@ -38,7 +38,7 @@ class BuildTransferProvider : ContentProvider() {
         val prefs = app.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val authorized = prefs.getString("key_$id", null) ?: throw FileNotFoundException("Expired capability")
         val issued = prefs.getLong("time_$id", 0L)
-        if (System.currentTimeMillis() - issued !in 0..(6L * 60 * 60 * 1000)) {
+        if (System.currentTimeMillis() - issued !in 0L..(6L * 60 * 60 * 1000)) {
             throw FileNotFoundException("Expired build capability")
         }
         if (!MessageDigest.isEqual(authorized.toByteArray(), secret.toByteArray())) {

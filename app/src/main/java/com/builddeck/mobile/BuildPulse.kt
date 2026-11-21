@@ -33,7 +33,7 @@ internal fun BuildPulseCard(
     val animating = active && !stale
     val failed = record.status == "FAILED"
     val imported = record.status == "READY"
-    val compiled = record.status == "SUCCESS_NEEDS_IMPORT"
+    val compiled = record.status in setOf("SUCCESS_NEEDS_IMPORT", "SUCCESS")
     val finished = imported || compiled
     val infinite = rememberInfiniteTransition(label = "build-running")
     val pulse by infinite.animateFloat(

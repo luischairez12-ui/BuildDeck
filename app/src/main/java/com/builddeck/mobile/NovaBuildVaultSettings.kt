@@ -141,7 +141,8 @@ internal fun NovaBuildConsole(
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 NovaStatus("$active building", active > 0)
                 NovaStatus("$completed ready", true)
                 NovaStatus("$failed failed", false)
