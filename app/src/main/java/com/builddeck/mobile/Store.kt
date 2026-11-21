@@ -19,7 +19,7 @@ import java.util.zip.ZipOutputStream
 data class Project(val id: String, val name: String, val rootRelative: String, val created: Long)
 data class Release(val id: String, val projectId: String, val name: String, val path: String, val added: Long)
 
-data class BuildHandoff(val projectId: String, val zipName: String)
+data class BuildHandoff(val projectId: String, val zipName: String, val projectLabel: String)
 data class Snapshot(val fileName: String, val created: Long)
 
 /** Reversible removal from the active Projects list; source data stays on-device. */
@@ -382,7 +382,9 @@ class Store(private val context: Context) {
                 resolver.delete(uri, null, null)
                 throw ex
             }
-            return BuildHandoff(project.id, zipName)
+            val label = project.name.replace(Regex("[^A-Za-z0-9._-]"), "-")
+                .trim('-').take(40).ifBlank { "AndroidApp" }
+            return BuildHandoff(project.id, zipName, label)
         } finally { temporary.delete() }
     }
 
