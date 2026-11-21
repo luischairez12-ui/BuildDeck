@@ -47,7 +47,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: builddeck-0.4.4-apk-delivery-ci-fresh-install-apk
+          name: builddeck-0.4.5-ai-workflow-ci-fresh-install-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14

@@ -1,5 +1,12 @@
 # BuildDeck — Nova Studio
 
+## BuildDeck v0.4.5 — Guided AI Development Workflow
+
+**Phase 1 + Phase 2 combined:** Start with a real Android app source, generate a `builddeck.patch.v1` file grounded in that source, inspect changes inside BuildDeck, approve the edits, then build and install an updated APK. In each project's **Tools → AI development workspace**, type a request and tap **Copy AI request for ChatGPT**. The request includes your exact project name and optional linked GitHub repository, and the editor has a direct **Import AI patch for review** action. All permissions, source snapshots and build confirmations remain user-controlled.
+
+This is an **assisted clipboard-and-patch workflow**, not a direct remote ChatGPT phone connection. You must share the source ZIP or provide an accessible linked repository; manual APK import from Downloads remains an acceptable fallback.
+
+[Read the v0.4.5 phase 1 + 2 test instructions](docs/BATCH45_AI_WORKFLOW.md).
 ## BuildDeck v0.4.4 — APK Delivery & Downloads
 
 After a successful **BuildDeck-controlled** Termux build, the app now considers the authenticated, delivered build log when verifying completion, not only callback stdout. The bundled builder still preserves `Downloads/BuildDeck/Out/` and also tries to save a readable APK in the phone's main `Downloads` folder. Every APK in the Vault now has **Save APK to Downloads**, and completed build cards can open the Vault directly.
