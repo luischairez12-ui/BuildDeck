@@ -53,7 +53,7 @@ class MainActivity : ComponentActivity() {
 
     private fun sharedApk(intent: Intent?): Uri? {
         if (intent?.action != Intent.ACTION_SEND) return null
-        return intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+        return intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
             ?: intent.clipData?.getItemAt(0)?.uri
     }
 
