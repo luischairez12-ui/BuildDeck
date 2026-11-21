@@ -39,8 +39,8 @@ finalize_build() {
   code=$?
   trap - EXIT
   if [ "$code" -eq 0 ]; then echo "BUILDDECK_RESULT=SUCCESS"; report_stage "Complete"; else echo "BUILDDECK_RESULT=FAILED (exit $code)"; report_stage "Build failed"; fi
-  # Termux's PendingIntent is authoritative for completion; the FileProvider copy
-  # is a best-effort way to make full logs available in the Android app.
+  # Termux's PendingIntent remains authoritative; the authenticated handoff
+  # copies the full log to BuildDeck private storage when Android permits it.
   if [[ "$log_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -s "$log" ]; then
     /system/bin/content write --uri "$log_uri" < "$log" >/dev/null 2>&1 || true
   fi
@@ -107,6 +107,7 @@ report_stage "Packaging APK"
 dest="$out/${record_id:-$(date +%Y%m%d_%H%M%S)}_$(basename "$apk")"
 cp -f -- "$apk" "$dest"
 echo "BUILDDECK_APK=$dest"
+echo "BUILDDECK_APK_SHA256=$(sha256sum "$dest" | awk '{print $1}')"
 if [[ "$apk_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
   if /system/bin/content write --uri "$apk_uri" < "$dest" >/dev/null 2>&1; then
     echo "BUILDDECK_APK_IMPORTED=YES"
