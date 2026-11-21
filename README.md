@@ -3,6 +3,12 @@
 **Native Android app source.** Batch 2 was built by GitHub Actions and then compiled and installed on the user's OnePlus using Termux. Batch 2.5 changes are currently tested by CI; the one-tap Termux callback and automatic APK transfer still require phone testing.
 
 
+## BuildDeck v0.4.3 — Smart Build Pipeline
+
+Nova Studio now includes **Check GitHub updates** from Home and Builds, explicit source review and approval before building, a real animated build-stage monitor (**blue while building, red on failure, brief green flash when done**), an authenticated write-only Termux APK/log/stage handoff with SHA-256 verification and Out-folder fallback, richer APK version/signing compatibility details, and filterable build history with safe bulk cleanup. Existing local builds, GitHub links, backups, saved APKs and project archives stay intact.
+
+The new direct APK handoff is **not yet verified on the user's OnePlus** and cannot recover an older build retroactively. The APK Vault still supports manual import and File Manager → Share. See [Batch 4.3 validation and update instructions](docs/BATCH43_SMART_BUILD_PIPELINE.md).
+
 ## BuildDeck v0.4.0 — Nova Studio
 
 The approved white-and-cobalt-blue **Nova Studio** redesign is now a native Kotlin/Jetpack Compose UI. It replaces the old oversized dark dashboard with five dedicated screens: **Dashboard, Projects, Builds, Vault, Settings**. A project opens a four-tab workspace with **Overview, Files, GitHub, Tools**. Source editing, local Termux debug builds, GitHub review, saved APKs, archives and app update safeguards remain functional. Optional dark appearance is available in Settings.
