@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +60,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Native edge-to-edge: NovaTopBar applies the status-bar inset itself.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         incomingApk = sharedApk(intent)
         val store = Store(this)
         setContent {
@@ -308,9 +311,22 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         secondary = NovaBlueDeep
     )
 
+    // Keep Android status/navigation icons readable in either Nova theme.
+    SideEffect {
+        (context as? ComponentActivity)?.let { activity ->
+            WindowCompat.getInsetsController(activity.window, activity.window.decorView).apply {
+                isAppearanceLightStatusBars = !novaDarkMode
+                isAppearanceLightNavigationBars = !novaDarkMode
+            }
+            activity.window.statusBarColor = android.graphics.Color.TRANSPARENT
+            activity.window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            activity.window.isNavigationBarContrastEnforced = false
+        }
+    }
+
     MaterialTheme(colorScheme = colors) {
         Scaffold(
-            containerColor = Night,
+            containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 NovaTopBar(section, projects.firstOrNull { it.id == selectedId }) {
                     if (editorPath != null) editorPath = null

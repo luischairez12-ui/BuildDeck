@@ -163,8 +163,13 @@ internal fun NovaBanner(project: Project, link: RepoLink?, onClick: () -> Unit) 
 
 @Composable
 internal fun NovaTopBar(section: String, project: Project?, onBack: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         if (project == null) NovaLogo(size = 36.dp)
         else TextButton(onClick = onBack) { Text("‹", color = NovaBlue, fontSize = 26.sp) }
         Spacer(Modifier.width(9.dp))

@@ -265,9 +265,9 @@ internal fun NovaSettings(
         }
         item {
             NovaCard {
-                Text("BuildDeck v0.4.0 • Nova Studio",
+                Text("BuildDeck v0.4.1 • Nova Studio",
                     fontWeight = FontWeight.Bold)
-                NovaHint("New dashboard, workspace, build console, Vault, and a light/dark appearance toggle. GitHub review, local builds, and archived projects remain available.")
+                NovaHint("Color and system-bar visibility corrected: pearl-white background, deep navy text, cobalt accents, and readable status icons. Your projects and build data remain unchanged.")
                 NovaHint("Remote ChatGPT phone access is not enabled.")
             }
         }
