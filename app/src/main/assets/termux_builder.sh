@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# BuildDeck 2.5 local builder. Executes only after the user's approval.
+# BuildDeck 4.3 approved local builder with authenticated on-device output handoff.
 # Source is transferred through Downloads, never executed from Downloads.
 set -Eeuo pipefail
 project_id="${1:-}"
@@ -7,6 +7,7 @@ zip_name="${2:-}"
 apk_uri="${3:-}"
 log_uri="${4:-}"
 record_id="${5:-}"
+stage_uri="${6:-}"
 if [[ -n "$record_id" ]] && [[ ! "$record_id" =~ ^[a-f0-9-]{36}$ ]]; then echo "Invalid build record id"; exit 2; fi
 if [[ ! "$project_id" =~ ^[a-f0-9-]{36}$ ]] || [[ ! "$zip_name" =~ ^[a-f0-9-]{36}_[0-9]+\.zip$ ]] || [[ "$zip_name" != "$project_id"_* ]]; then
   echo "Invalid project id or archive name" >&2
@@ -26,21 +27,29 @@ workspace="$HOME/builddeck/work/$project_id"
 mkdir -p "$out" "$HOME/builddeck/work"
 log="$out/${record_id:-build_$(date +%Y%m%d_%H%M%S)}.log"
 exec > >(tee -a "$log") 2>&1
+report_stage() {
+  local description="$1"
+  echo "BUILDDECK_STAGE=$description"
+  # Actual stage events, no simulated percent complete.
+  if [[ "$stage_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
+    printf "%s\n" "$description" | /system/bin/content write --uri "$stage_uri" >/dev/null 2>&1 || true
+  fi
+}
 finalize_build() {
   code=$?
   trap - EXIT
-  if [ "$code" -eq 0 ]; then echo "BUILDDECK_RESULT=SUCCESS"; else echo "BUILDDECK_RESULT=FAILED (exit $code)"; fi
+  if [ "$code" -eq 0 ]; then echo "BUILDDECK_RESULT=SUCCESS"; report_stage "Complete"; else echo "BUILDDECK_RESULT=FAILED (exit $code)"; report_stage "Build failed"; fi
   # Termux's PendingIntent is authoritative for completion; the FileProvider copy
   # is a best-effort way to make full logs available in the Android app.
-  if [[ "$log_uri" == content://com.builddeck.mobile.files/* ]] && [ -s "$log" ]; then
+  if [[ "$log_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -s "$log" ]; then
     /system/bin/content write --uri "$log_uri" < "$log" >/dev/null 2>&1 || true
   fi
   exit "$code"
 }
 trap finalize_build EXIT
 
-echo "BuildDeck local build pipeline v0.3.1"
-echo "BUILDDECK_STAGE=Preparing project"
+echo "BuildDeck local build pipeline v4.3"
+report_stage "Preparing project"
 echo "Input: $inbox"
 echo "Java: $JAVA_HOME"
 echo "SDK: $ANDROID_HOME"
@@ -55,7 +64,7 @@ mkdir -p "$workspace"
 if unzip -Z1 "$inbox" | grep -Eq '(^/|(^|/)\.\.(/|$)|\\)'; then
   echo "Unsafe ZIP entries"; exit 5
 fi
-echo "BUILDDECK_STAGE=Extracting source"
+report_stage "Extracting source"
 unzip -q "$inbox" -d "$workspace"
 root="$workspace"
 if [ ! -f "$root/settings.gradle" ] && [ ! -f "$root/settings.gradle.kts" ]; then
@@ -89,22 +98,22 @@ else
   echo "No compatible Gradle executable found"; exit 8
 fi
 
-echo "BUILDDECK_STAGE=Compiling Android app"
+report_stage "Compiling Android app"
 echo "Running: ${cmd[0]} --no-daemon --max-workers=2 assembleDebug"
 "${cmd[@]}" --no-daemon --max-workers=2 assembleDebug "-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)"
 apk="$(find "$root" -type f -path '*/build/outputs/apk/debug/*.apk' -name '*.apk' -print -quit)"
 [ -n "$apk" ] && [ -s "$apk" ] || { echo "Gradle completed without an APK"; exit 9; }
-echo "BUILDDECK_STAGE=Packaging APK"
+report_stage "Packaging APK"
 dest="$out/${record_id:-$(date +%Y%m%d_%H%M%S)}_$(basename "$apk")"
 cp -f -- "$apk" "$dest"
 echo "BUILDDECK_APK=$dest"
-if [[ "$apk_uri" == content://com.builddeck.mobile.files/* ]] && [ -x /system/bin/content ]; then
+if [[ "$apk_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
   if /system/bin/content write --uri "$apk_uri" < "$dest" >/dev/null 2>&1; then
     echo "BUILDDECK_APK_IMPORTED=YES"
   else
     echo "BUILDDECK_APK_IMPORTED=NO - use the manual import from Downloads"
   fi
 fi
-echo "BUILDDECK_STAGE=APK ready"
+report_stage "APK ready"
 echo "APK ready in Downloads/BuildDeck/Out/$project_id"
 echo "Signing: Gradle debug.keystore in Termux ~/.android/ (keep a private backup)."
