@@ -1,5 +1,12 @@
 # BuildDeck — Nova Studio
 
+## BuildDeck v0.4.6 — AI Sync Inbox
+
+The **AI Sync Inbox** on Home checks all locally GitHub-linked source projects when BuildDeck opens or returns to the foreground (with a short throttle), lists pending changed files and repository errors, and offers **Refresh** and **Review changes**. Review is explicit: the existing GitHub source-review dialog reloads the current code and requires per-file approval, conflict validation and a rollback snapshot. **Ask for APK build** is OFF by default. APK installs never happen automatically.
+
+This is a **GitHub-based** ChatGPT workflow, not direct ChatGPT access to files on the phone. Changes must be committed to a linked GitHub repository to appear in the Inbox. ZIP-only projects must be imported from GitHub to participate. [See the v0.4.6 feature and phone test guide](docs/BATCH46_AI_SYNC_INBOX.md).
+
+
 ## BuildDeck v0.4.5 — Guided AI Development Workflow
 
 **Phase 1 + Phase 2 combined:** Start with a real Android app source, generate a `builddeck.patch.v1` file grounded in that source, inspect changes inside BuildDeck, approve the edits, then build and install an updated APK. In each project's **Tools → AI development workspace**, type a request and tap **Copy AI request for ChatGPT**. The request includes your exact project name and optional linked GitHub repository, and the editor has a direct **Import AI patch for review** action. All permissions, source snapshots and build confirmations remain user-controlled.

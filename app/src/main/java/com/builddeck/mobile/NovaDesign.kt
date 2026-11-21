@@ -386,6 +386,9 @@ internal fun NovaHero() {
 internal fun NovaDashboard(
     projects: List<Project>, releases: List<Release>,
     builds: List<BuildRecord>, activeLink: RepoLink?,
+    inboxItems: List<AiSyncInboxEntry>, inboxChecking: Boolean,
+    inboxLastCheckedAt: Long, linkedProjectCount: Int,
+    onInboxRefresh: () -> Unit, onInboxReview: (String) -> Unit,
     onProject: (Project) -> Unit, onBuild: (Project) -> Unit,
     onProjects: () -> Unit, onBuilds: () -> Unit, onVault: () -> Unit,
     onGitHub: () -> Unit, onImport: () -> Unit
@@ -403,6 +406,17 @@ internal fun NovaDashboard(
                 NovaHint("Import a complete Android Gradle source project.")
                 NovaPrimaryButton("+ Import project", onImport)
             }
+        }
+        item {
+            NovaAiSyncInbox(
+                entries = inboxItems,
+                linkedProjects = linkedProjectCount,
+                scanning = inboxChecking,
+                checkedAt = inboxLastCheckedAt,
+                onRefresh = onInboxRefresh,
+                onReview = onInboxReview,
+                onLinkProject = onProjects
+            )
         }
         item { NovaPrimaryButton("ϟ   Build APK on this phone",
             onClick = { if (active != null) onBuild(active) },

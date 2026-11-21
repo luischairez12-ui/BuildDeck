@@ -113,7 +113,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
     var incomingProject by remember { mutableStateOf<Project?>(null) }
     var incomingReview by remember { mutableStateOf<IncomingReview?>(null) }
     var incomingSelected by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var incomingBuildAfter by remember { mutableStateOf(true) }
+    var incomingBuildAfter by remember { mutableStateOf(false) }
     var accessRevision by remember { mutableIntStateOf(0) }
     var patchForProject by remember { mutableStateOf<Project?>(null) }
     var patchReview by remember { mutableStateOf<PatchBundle?>(null) }
@@ -123,6 +123,11 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
     var visibleLog by remember { mutableStateOf<String?>(null) }
     var outputScanResult by remember { mutableStateOf<String?>(null) }
     var buildRevision by remember { mutableIntStateOf(0) }
+    var inboxItems by remember { mutableStateOf<List<AiSyncInboxEntry>>(emptyList()) }
+    var inboxChecking by remember { mutableStateOf(false) }
+    var inboxLastCheckedAt by remember { mutableLongStateOf(0L) }
+    var inboxLastRequestedAt by remember { mutableLongStateOf(0L) }
+    var inboxCheckRevision by remember { mutableIntStateOf(0) }
 
     fun notify(message: String) { Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
     fun reload() { projects = store.projects(); releases = store.releases(); archivedProjects = store.archivedProjects() }
@@ -136,10 +141,72 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                 buildRevision++
                 reload()
                 outputConnected = outputCollector.isConnected()
+                // A read-only check on launch/return, throttled by the scan effect.
+                inboxCheckRevision++
             }
         }
         owner?.lifecycle?.addObserver(observer)
         onDispose { owner?.lifecycle?.removeObserver(observer) }
+    }
+
+    /**
+     * On app open/resume, discover changed GitHub sources for all locally linked
+     * projects. Read-only: NO writes, APK builds, installs, or background polling.
+     * The manual Refresh button resets the 3-minute foreground throttle.
+     */
+    LaunchedEffect(projects, githubRevision, inboxCheckRevision) {
+        val linked = withContext(Dispatchers.IO) {
+            projects.mapNotNull { project ->
+                githubWorkspace.link(project)?.let { project to it }
+            }
+        }
+        if (linked.isEmpty()) {
+            inboxItems = emptyList()
+            inboxChecking = false
+            inboxLastCheckedAt = 0L
+            return@LaunchedEffect
+        }
+        val now = System.currentTimeMillis()
+        if (now - inboxLastRequestedAt in 0L until (3L * 60L * 1000L)) {
+            return@LaunchedEffect
+        }
+        inboxLastRequestedAt = now
+        inboxChecking = true
+        try {
+            val result = withContext(Dispatchers.IO) {
+                linked.map { (project, link) ->
+                    runCatching {
+                        val review = incomingBridge.check(project)
+                        AiSyncInboxEntry(
+                            projectId = project.id,
+                            projectName = project.name,
+                            repository = "${link.owner}/${link.repo}",
+                            branch = link.branch,
+                            changedPaths = review.changes.map { it.path },
+                            skipped = review.skipped,
+                            conflicts = review.changes.count { it.conflict != null }
+                        )
+                    }.getOrElse { error ->
+                        AiSyncInboxEntry(
+                            projectId = project.id,
+                            projectName = project.name,
+                            repository = "${link.owner}/${link.repo}",
+                            branch = link.branch,
+                            error = "GitHub check failed: " + error.message.orEmpty().take(160)
+                        )
+                    }
+                }
+            }
+            inboxItems = result
+            inboxLastCheckedAt = System.currentTimeMillis()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // A new app-resume event or project import may restart this effect.
+            // Don't suppress the next scan due to a cancelled attempt.
+            inboxLastRequestedAt = 0L
+            throw cancelled
+        } finally {
+            inboxChecking = false
+        }
     }
 
     // While a project is open, read granted build logs for live stages and APKs.
@@ -321,7 +388,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                     incomingSelected = review.changes
                         .filter { it.conflict == null && it.text != null }
                         .map { it.path }.toSet()
-                    incomingBuildAfter = true
+                    incomingBuildAfter = false
                 }
             } catch (error: Exception) {
                 notify("GitHub check failed: " + error.message)
@@ -502,6 +569,17 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         releases = releases,
                         builds = run { buildRevision; aiControl.buildRecords() },
                         activeLink = projects.firstOrNull()?.let { githubWorkspace.link(it) },
+                        inboxItems = inboxItems,
+                        inboxChecking = inboxChecking,
+                        inboxLastCheckedAt = inboxLastCheckedAt,
+                        linkedProjectCount = projects.count { githubWorkspace.link(it) != null },
+                        onInboxRefresh = {
+                            inboxLastRequestedAt = 0L
+                            inboxCheckRevision++
+                        },
+                        onInboxReview = { id ->
+                            projects.firstOrNull { it.id == id }?.let { checkGithubUpdates(it) }
+                        },
                         onProject = { selectedId = it.id },
                         onBuild = { buildConfirm = it },
                         onProjects = { section = "Projects" },
@@ -739,6 +817,8 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                             }
                             githubRevision++
                             reload()
+                            inboxLastRequestedAt = 0L
+                            inboxCheckRevision++
                             notify("Applied ${approved.size} GitHub files. Backup: ${safety.name}")
                             if (wantsBuild) buildConfirm = incomingTarget
                         } catch (error: Exception) {
