@@ -1,6 +1,8 @@
 package com.builddeck.mobile
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,107 +20,203 @@ internal fun NovaBuildConsole(
     projects: List<Project>,
     records: List<BuildRecord>,
     outputConnected: Boolean,
+    githubLinkedProjects: Set<String>,
     onBuild: (Project) -> Unit,
+    onCheckGitHub: (Project) -> Unit,
     onImportApk: (Project) -> Unit,
     onViewLog: (BuildRecord) -> Unit,
     onImportLog: (BuildRecord) -> Unit,
     onDismiss: (BuildRecord) -> Unit,
+    onClearCompleted: (Project) -> Unit,
     onScan: () -> Unit,
     onConnectOutput: () -> Unit
 ) {
+    val context = LocalContext.current
     var selectedId by remember(projects) { mutableStateOf(projects.firstOrNull()?.id) }
+    var statusFilter by remember { mutableStateOf("All") }
     var recordToClear by remember { mutableStateOf<BuildRecord?>(null) }
+    var confirmBulkClear by remember { mutableStateOf(false) }
     val selected = projects.firstOrNull { it.id == selectedId } ?: projects.firstOrNull()
-    val filtered = records.filter { selected == null || it.projectId == selected.id }
-    LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { NovaHeader("Build console", "Compile APKs and follow real build results.") }
+    val projectRecords = records.filter { selected == null || it.projectId == selected.id }
+    val active = projectRecords.count { it.status in setOf("SUBMITTED", "RUNNING") }
+    val completed = projectRecords.count { it.status == "READY" }
+    val failed = projectRecords.count { it.status == "FAILED" }
+    val waitingImport = projectRecords.count { it.status == "SUCCESS_NEEDS_IMPORT" }
+    val newest = projectRecords.firstOrNull()
+    val filtered = projectRecords.filter { record ->
+        when (statusFilter) {
+            "Building" -> record.status in setOf("SUBMITTED", "RUNNING")
+            "Ready" -> record.status == "READY"
+            "Needs import" -> record.status == "SUCCESS_NEEDS_IMPORT"
+            "Failed" -> record.status == "FAILED"
+            else -> true
+        }
+    }
+    LazyColumn(
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item { NovaHeader("Build console", "Real-time Android builds, without confusing terminal output.") }
         item {
             NovaCard {
                 Text("SELECTED PROJECT", color = NovaBlue,
                     style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                if (selected == null) NovaHint("Import an Android project before building.")
+                if (selected == null) NovaHint("Import a source project first.")
                 else {
                     Text(selected.name, style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold)
                     if (projects.size > 1) {
-                        projects.forEach { project ->
-                            FilterChip(selected = selected.id == project.id,
-                                onClick = { selectedId = project.id },
-                                label = { Text(project.name, maxLines = 1) })
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                            projects.forEach { project ->
+                                FilterChip(selected = selected.id == project.id,
+                                    onClick = { selectedId = project.id; statusFilter = "All" },
+                                    label = { Text(project.name, maxLines = 1) })
+                                Spacer(Modifier.width(5.dp))
+                            }
                         }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NovaStatus("Debug APK", true)
-                    NovaStatus("SDK 35 • Gradle 8.9", true)
+                    NovaStatus("Termux • Debug APK", true)
+                    NovaStatus("Gradle 8.9", true)
                 }
-                NovaHint("The local Termux builder compiles debug APKs. Production signing and automatic install are not implemented.")
                 NovaPrimaryButton("ϟ   Start build",
                     onClick = { if (selected != null) onBuild(selected) },
                     enabled = selected != null)
+                if (selected != null && selected.id in githubLinkedProjects) {
+                    OutlinedButton(onClick = { onCheckGitHub(selected) },
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text("⇅  Check GitHub updates before building", color = NovaBlue)
+                    }
+                    NovaHint("All updates require review and approval before a separate build confirmation.")
+                }
+            }
+        }
+        if (newest != null) {
+            item { NovaSection("Latest build", "Read log", if (newest.logFile != null)
+                { { onViewLog(newest) } } else null) }
+            item {
+                BuildPulseCard(
+                    record = newest,
+                    stage = BuildTransferProvider.stage(context, newest.id),
+                    onViewLog = if (newest.logFile != null) { { onViewLog(newest) } } else null,
+                    onImportApk = if (selected != null) { { onImportApk(selected) } } else null
+                )
             }
         }
         item {
-            NovaSection("Build output")
-            NovaCard {
-                Text(if (outputConnected) "Output folder connected" else "Output folder not connected",
-                    fontWeight = FontWeight.SemiBold)
-                NovaHint(if (outputConnected)
-                    "Scan the approved Out folder for finished APKs."
-                else "Choose Downloads/BuildDeck/Out for APK collection.")
-                if (outputConnected) OutlinedButton(onClick = onScan,
-                    modifier = Modifier.fillMaxWidth()) {
-                    Text("Scan APK output", color = NovaBlue)
-                } else OutlinedButton(onClick = onConnectOutput,
-                    modifier = Modifier.fillMaxWidth()) {
-                    Text("Connect output folder", color = NovaBlue)
-                }
-                if (selected != null) TextButton(onClick = { onImportApk(selected) }) {
-                    Text("Import finished APK manually ›", color = NovaBlue)
-                }
-            }
-        }
-        item { NovaSection("Recent builds") }
-        if (filtered.isEmpty()) item { NovaCard { NovaHint("No build requests for this project yet.") } }
-        items(filtered.take(30), key = { it.id }) { record ->
+            NovaSection("APK collection")
             NovaCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Build " + record.id.take(8), fontWeight = FontWeight.Bold)
-                        NovaHint(novaDate(record.submittedAt))
+                        Text("Automatic APK handoff", fontWeight = FontWeight.SemiBold)
+                        NovaHint("BuildDeck attempts direct verified transfer from Termux to Vault after each successful build.")
                     }
-                    NovaStatus(record.status.replace('_', ' '), record.status == "READY")
+                    NovaStatus("Enabled", true)
                 }
-                if (record.note.isNotBlank()) NovaHint(record.note.take(200))
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    if (record.logFile != null) TextButton(onClick = { onViewLog(record) }) {
-                        Text("View log", color = NovaBlue)
+                if (outputConnected) {
+                    NovaHint("Out-folder backup also connected.")
+                    OutlinedButton(onClick = onScan, modifier = Modifier.fillMaxWidth()) {
+                        Text("Scan backup Out folder", color = NovaBlue)
                     }
-                    TextButton(onClick = { onImportLog(record) }) {
-                        Text("Import log", color = NovaBlue)
+                } else {
+                    NovaHint("Manual Downloads backup is available if Android blocks direct transfer.")
+                    OutlinedButton(onClick = onConnectOutput, modifier = Modifier.fillMaxWidth()) {
+                        Text("Connect backup Out folder (optional)", color = NovaBlue)
                     }
-                    TextButton(onClick = { recordToClear = record }) {
-                        Text("Clear", color = NovaMuted)
+                }
+                if (selected != null) TextButton(onClick = { onImportApk(selected) }) {
+                    Text("Import an APK manually ›", color = NovaBlue)
+                }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Build history", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold)
+                if (selected != null && completed + failed > 0) {
+                    TextButton(onClick = { confirmBulkClear = true }) {
+                        Text("Clear finished", color = NovaBlue)
                     }
                 }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NovaStatus("$active building", active > 0)
+                NovaStatus("$completed ready", true)
+                NovaStatus("$failed failed", false)
+                if (waitingImport > 0) NovaStatus("$waitingImport import", false)
+            }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf("All", "Building", "Ready", "Needs import", "Failed").forEach { tab ->
+                    FilterChip(selected = statusFilter == tab,
+                        onClick = { statusFilter = tab },
+                        label = { Text(tab) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = NovaBlue,
+                            selectedLabelColor = androidx.compose.ui.graphics.Color.White))
+                }
+            }
+        }
+        val history = filtered.filterNot { it.id == newest?.id }
+        if (history.isEmpty()) item {
+            NovaCard { NovaHint(if (projectRecords.isEmpty()) "No builds yet. Start a build above."
+                else if (newest != null && filtered.size == 1 && statusFilter == "All")
+                    "Your newest build is displayed above."
+                else "No other builds match this status filter.") }
+        }
+        items(history.take(40), key = { it.id }) { record ->
+            BuildPulseCard(
+                record = record,
+                stage = BuildTransferProvider.stage(context, record.id),
+                onViewLog = if (record.logFile != null) { { onViewLog(record) } } else null,
+                onImportApk = if (selected != null) { { onImportApk(selected) } } else null,
+                compact = true
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { onImportLog(record) }) {
+                    Text("Import log", color = NovaBlue)
+                }
+                if (record.status !in setOf("SUBMITTED", "RUNNING")) {
+                    TextButton(onClick = { recordToClear = record }) {
+                        Text("Clear entry", color = NovaMuted)
+                    }
+                }
+            }
+        }
+        item {
+            NovaHint("Clearing history never deletes APK Vault releases or source projects. Incomplete imports are not bulk-cleared.")
         }
     }
     if (recordToClear != null) {
         val record = recordToClear!!
         AlertDialog(
             onDismissRequest = { recordToClear = null },
-            title = { Text("Clear build record?") },
-            text = { Text("This removes the history entry only. It does not stop Termux or delete any APK.") },
+            title = { Text("Clear build history entry?") },
+            text = { Text("The request will be hidden, but saved APKs and project sources are preserved.") },
             confirmButton = {
                 Button(onClick = { recordToClear = null; onDismiss(record) }) {
-                    Text("Clear record")
+                    Text("Clear entry")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { recordToClear = null }) { Text("Cancel") }
             }
+        )
+    }
+    if (confirmBulkClear && selected != null) {
+        AlertDialog(
+            onDismissRequest = { confirmBulkClear = false },
+            title = { Text("Clear finished build history?") },
+            text = { Text("Remove $completed completed and $failed failed entries for " +
+                selected.name + "? Your APK Vault, source code, logs, and unfinished imports stay saved.") },
+            confirmButton = {
+                Button(onClick = { confirmBulkClear = false; onClearCompleted(selected) }) {
+                    Text("Clear finished")
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmBulkClear = false }) { Text("Cancel") } }
         )
     }
 }
