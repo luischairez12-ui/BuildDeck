@@ -68,7 +68,7 @@ fun ProjectCleanupDialog(
                     }
                     Row {
                         Checkbox(checked = rebuildAfter, onCheckedChange = { rebuildAfter = it })
-                        Text("Offer to build the kept project after cleanup",
+                        Text("Review latest GitHub changes, then offer to build",
                             modifier = Modifier.padding(top = 12.dp),
                             style = MaterialTheme.typography.bodySmall)
                     }
