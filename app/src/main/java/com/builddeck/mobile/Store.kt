@@ -22,6 +22,13 @@ data class Release(val id: String, val projectId: String, val name: String, val 
 data class BuildHandoff(val projectId: String, val zipName: String)
 data class Snapshot(val fileName: String, val created: Long)
 
+/** Reversible removal from the active Projects list; source data stays on-device. */
+data class ArchivedProject(
+    val project: Project,
+    val archivedAt: Long,
+    val releaseIds: List<String>
+)
+
 /** Local-only project storage. Nothing is uploaded to a server or GitHub. */
 class Store(private val context: Context) {
     private val root = File(context.filesDir, "projects").apply { mkdirs() }
@@ -29,12 +36,119 @@ class Store(private val context: Context) {
     private val snapshotRoot = File(context.filesDir, "snapshots").apply { mkdirs() }
     private val projectIndex = File(context.filesDir, "projects.json")
     private val releaseIndex = File(context.filesDir, "releases.json")
+    private val archivedRoot = File(context.filesDir, "archived_projects").apply { mkdirs() }
+    private val archivedIndex = File(context.filesDir, "archived_projects.json")
 
     fun projects(): List<Project> = readArray(projectIndex).mapNotNull { item ->
         runCatching {
             Project(item.getString("id"), item.getString("name"), item.optString("rootRelative"), item.getLong("created"))
         }.getOrNull()
     }.sortedByDescending { it.created }
+
+    fun archivedProjects(): List<ArchivedProject> =
+        readArray(archivedIndex).mapNotNull { row ->
+            runCatching {
+                val project = Project(row.getString("id"), row.getString("name"),
+                    row.optString("rootRelative"), row.getLong("created"))
+                val ids = row.optJSONArray("releaseIds") ?: JSONArray()
+                ArchivedProject(project, row.getLong("archivedAt"),
+                    (0 until ids.length()).map { ids.getString(it) })
+            }.getOrNull()
+        }.sortedByDescending { it.archivedAt }
+
+    /**
+     * Keep exactly one source project visible. This does not delete APKs,
+     * snapshots, build logs, linked GitHub metadata, or the original source.
+     * Removed sources are moved into private, reversible local archive storage.
+     */
+    fun archiveOtherProjects(keepId: String): Int {
+        val active = projects()
+        val keeper = active.firstOrNull { it.id == keepId }
+            ?: error("The project to keep was not found")
+        require(isGradleProject(keeper)) {
+            "Choose a real Gradle source project, preferably the GitHub-linked BuildDeck."
+        }
+        val old = active.filterNot { it.id == keepId }
+        for (project in old) archiveProject(project, keeper)
+        return old.size
+    }
+
+    private fun archiveProject(project: Project, keeper: Project) {
+        val source = File(root, project.id)
+        val archive = File(archivedRoot, project.id)
+        require(source.isDirectory) { "Project source missing: ${project.name}" }
+        require(!archive.exists() && archivedProjects().none { it.project.id == project.id }) {
+            "An archived project with that ID already exists"
+        }
+        val existingProjects = projects()
+        require(existingProjects.any { it.id == project.id } && existingProjects.any { it.id == keeper.id }) {
+            "Project list changed; reopen the cleanup screen"
+        }
+        val previousReleases = releases()
+        val previousArchives = archivedProjects()
+        val attached = previousReleases.filter { it.projectId == project.id }.map { it.id }
+        val entry = ArchivedProject(project, System.currentTimeMillis(), attached)
+        require(source.renameTo(archive)) { "Could not archive sources for ${project.name}" }
+        try {
+            saveArchivedProjects(previousArchives + entry)
+            // Existing APKs stay visible in the Vault under the one surviving project.
+            saveReleases(previousReleases.map {
+                if (it.projectId == project.id) it.copy(projectId = keeper.id) else it
+            })
+            saveProjects(existingProjects.filterNot { it.id == project.id })
+        } catch (error: Exception) {
+            runCatching { saveProjects(existingProjects) }
+            runCatching { saveReleases(previousReleases) }
+            runCatching { saveArchivedProjects(previousArchives) }
+            archive.renameTo(source)
+            throw IllegalStateException("Could not archive ${project.name}: ${error.message}", error)
+        }
+    }
+
+    /** Restore the archived project with its original ID, GitHub link and APK ownership. */
+    fun restoreArchivedProject(id: String): Project {
+        val entry = archivedProjects().firstOrNull { it.project.id == id }
+            ?: error("Archive entry not found")
+        require(projects().none { it.id == id }) { "An active project with that ID already exists" }
+        val archive = File(archivedRoot, id)
+        val destination = File(root, id)
+        require(archive.isDirectory && !destination.exists()) { "Archive files are unavailable" }
+        val previousProjects = projects()
+        val previousReleases = releases()
+        val previousArchives = archivedProjects()
+        require(archive.renameTo(destination)) { "Could not move archived source back" }
+        try {
+            saveProjects(previousProjects + entry.project)
+            saveReleases(previousReleases.map {
+                if (it.id in entry.releaseIds) it.copy(projectId = id) else it
+            })
+            saveArchivedProjects(previousArchives.filterNot { it.project.id == id })
+        } catch (error: Exception) {
+            runCatching { saveProjects(previousProjects) }
+            runCatching { saveReleases(previousReleases) }
+            runCatching { saveArchivedProjects(previousArchives) }
+            destination.renameTo(archive)
+            throw IllegalStateException("Could not restore ${entry.project.name}: ${error.message}", error)
+        }
+        return entry.project
+    }
+
+    private fun saveArchivedProjects(items: List<ArchivedProject>) {
+        val array = JSONArray()
+        items.forEach { entry ->
+            val project = entry.project
+            val releases = JSONArray()
+            entry.releaseIds.forEach { releases.put(it) }
+            array.put(JSONObject().put("id", project.id).put("name", project.name)
+                .put("rootRelative", project.rootRelative).put("created", project.created)
+                .put("archivedAt", entry.archivedAt).put("releaseIds", releases))
+        }
+        val temporary = File(context.filesDir, "archived_projects.json.pending")
+        temporary.writeText(array.toString())
+        require(temporary.renameTo(archivedIndex) || run {
+            archivedIndex.delete(); temporary.renameTo(archivedIndex)
+        }) { "Cannot update archived project index" }
+    }
 
     fun renameProject(project: Project, newName: String): Project {
         val renamed = project.copy(name = newName.trim().take(60))
