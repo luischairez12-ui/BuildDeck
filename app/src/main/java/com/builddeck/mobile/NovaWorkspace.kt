@@ -223,10 +223,10 @@ internal fun NovaWorkspace(
                                         "GitHub source: https://github.com/${repoLink.owner}/${repoLink.repo} " +
                                             "(branch ${repoLink.branch}). Use the current source on that branch."
                                     }
-                                    val message = "Please make this Android project change for me.\\n\\n" +
-                                        "BuildDeck project name (exact): ${project.name}\\n" +
-                                        reference + "\\n\\n" +
-                                        "Requested change: \\n" + change + "\\n\\n" +
+                                    val message = "Please make this Android project change for me.\n\n" +
+                                        "BuildDeck project name (exact): ${project.name}\n" +
+                                        reference + "\n\n" +
+                                        "Requested change: \n" + change + "\n\n" +
                                         "Use my actual current source, not a guessed project. " +
                                         "Prepare a downloadable BuildDeck builddeck.patch.v1 JSON with " +
                                         "projectName exactly equal to ${project.name}, per-file SHA-256 " +
