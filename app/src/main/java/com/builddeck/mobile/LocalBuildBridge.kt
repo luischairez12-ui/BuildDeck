@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import java.io.File
 
 /**
@@ -44,10 +45,30 @@ object LocalBuildBridge {
             putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "BuildDeck local APK")
         }
         try {
-            checkNotNull(context.startService(command)) { "Termux command service unavailable" }
+            // Termux RunCommandService calls startForeground() in onCreate().
+            // Android 8+ restricts starting another app's ordinary background
+            // service. It must be requested as a foreground service while
+            // BuildDeck is visible to the user.
+            val component = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(command)
+            } else {
+                context.startService(command)
+            }
+            checkNotNull(component) { "Termux command service unavailable" }
         } catch (error: Exception) {
             BuildTransferProvider.revoke(context, recordId)
             callback.cancel()
+            val blocked = error.javaClass.simpleName.contains("StartNotAllowed") ||
+                error.message.orEmpty().contains("Not allowed to start service", ignoreCase = true)
+            if (blocked) {
+                throw IllegalStateException(
+                    "Android blocked Termux while it was in the background. " +
+                    "Open Termux once, return to BuildDeck and tap Build APK again. " +
+                    "Keep BuildDeck visible until the build begins. If needed, " +
+                    "allow Termux background battery use in Android Settings.",
+                    error
+                )
+            }
             throw error
         }
     }
