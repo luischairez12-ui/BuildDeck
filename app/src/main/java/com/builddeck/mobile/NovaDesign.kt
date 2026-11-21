@@ -61,13 +61,13 @@ internal fun NovaLogo(modifier: Modifier = Modifier, size: Dp = 42.dp) {
             val right = w * .90f
             val diamond = Path().apply {
                 moveTo(w * .44f, cy)
-                quadraticTo(w * .50f, cy - h * .035f, w * .56f, cy)
+                quadraticBezierTo(w * .50f, cy - h * .035f, w * .56f, cy)
                 lineTo(right, cy + h * .13f)
-                quadraticTo(w * .96f, cy + h * .17f, right, cy + h * .22f)
+                quadraticBezierTo(w * .96f, cy + h * .17f, right, cy + h * .22f)
                 lineTo(w * .56f, cy + h * .37f)
-                quadraticTo(w * .50f, cy + h * .40f, w * .44f, cy + h * .37f)
+                quadraticBezierTo(w * .50f, cy + h * .40f, w * .44f, cy + h * .37f)
                 lineTo(left, cy + h * .22f)
-                quadraticTo(w * .04f, cy + h * .17f, left, cy + h * .13f)
+                quadraticBezierTo(w * .04f, cy + h * .17f, left, cy + h * .13f)
                 close()
             }
             drawPath(diamond, brush = Brush.linearGradient(
@@ -76,13 +76,13 @@ internal fun NovaLogo(modifier: Modifier = Modifier, size: Dp = 42.dp) {
                 end = Offset(w * .8f, cy + h * .38f)))
             val base = Path().apply {
                 moveTo(left, cy + h * .18f)
-                quadraticTo(w * .04f, cy + h * .22f, left, cy + h * .26f)
+                quadraticBezierTo(w * .04f, cy + h * .22f, left, cy + h * .26f)
                 lineTo(w * .44f, cy + h * .42f)
-                quadraticTo(w * .50f, cy + h * .45f, w * .56f, cy + h * .42f)
+                quadraticBezierTo(w * .50f, cy + h * .45f, w * .56f, cy + h * .42f)
                 lineTo(right, cy + h * .26f)
-                quadraticTo(w * .96f, cy + h * .22f, right, cy + h * .18f)
+                quadraticBezierTo(w * .96f, cy + h * .22f, right, cy + h * .18f)
                 lineTo(w * .56f, cy + h * .36f)
-                quadraticTo(w * .50f, cy + h * .40f, w * .44f, cy + h * .36f)
+                quadraticBezierTo(w * .50f, cy + h * .40f, w * .44f, cy + h * .36f)
                 close()
             }
             drawPath(base, color = dark.copy(alpha = .8f))
@@ -301,10 +301,10 @@ internal fun NovaHero() {
             // Developer silhouette: shoulder, hoodie, head and cap.
             val hoodie = Path().apply {
                 moveTo(w * .82f, h * .58f)
-                quadraticTo(w * .91f, h * .45f, w * .98f, h * .56f)
+                quadraticBezierTo(w * .91f, h * .45f, w * .98f, h * .56f)
                 lineTo(w * 1.07f, h * .98f)
                 lineTo(w * .72f, h * .98f)
-                quadraticTo(w * .75f, h * .73f, w * .82f, h * .58f)
+                quadraticBezierTo(w * .75f, h * .73f, w * .82f, h * .58f)
                 close()
             }
             drawPath(hoodie, Brush.linearGradient(
@@ -315,8 +315,8 @@ internal fun NovaHero() {
                 radius = h * .115f, center = Offset(w * .875f, h * .45f))
             val cap = Path().apply {
                 moveTo(w * .795f, h * .40f)
-                quadraticTo(w * .84f, h * .27f, w * .91f, h * .32f)
-                quadraticTo(w * .94f, h * .36f, w * .96f, h * .42f)
+                quadraticBezierTo(w * .84f, h * .27f, w * .91f, h * .32f)
+                quadraticBezierTo(w * .94f, h * .36f, w * .96f, h * .42f)
                 lineTo(w * .80f, h * .43f)
                 close()
             }
