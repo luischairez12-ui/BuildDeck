@@ -3,6 +3,14 @@
 **Native Android app source.** Batch 2 was built by GitHub Actions and then compiled and installed on the user's OnePlus using Termux. Batch 2.5 changes are currently tested by CI; the one-tap Termux callback and automatic APK transfer still require phone testing.
 
 
+## BuildDeck v0.4.0 — Nova Studio
+
+The approved white-and-cobalt-blue **Nova Studio** redesign is now a native Kotlin/Jetpack Compose UI. It replaces the old oversized dark dashboard with five dedicated screens: **Dashboard, Projects, Builds, Vault, Settings**. A project opens a four-tab workspace with **Overview, Files, GitHub, Tools**. Source editing, local Termux debug builds, GitHub review, saved APKs, archives and app update safeguards remain functional. Optional dark appearance is available in Settings.
+
+The interface only displays real build history and actual connected source information; options from the concept mockups such as production release signing, per-build percent completion, and automatic APK installation are not implemented.
+
+[See the Nova Studio redesign and safe update instructions](docs/NOVA_STUDIO_V040.md).
+
 ## BuildDeck 0.3.4: One-project cleanup
 
 Use **Projects → Clean up duplicates • Keep one project** to select the single real Gradle source project you want to maintain (the GitHub-linked BuildDeck is recommended). BuildDeck archives the other local project copies, hides them from Projects, preserves existing APKs in the Vault, and offers a separate confirmation to rebuild the kept project. **Archived projects (N) • Restore** reverses cleanup; no GitHub repos or external Downloads are deleted.
