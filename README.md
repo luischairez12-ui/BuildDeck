@@ -3,6 +3,12 @@
 **Native Android app source.** Batch 2 was built by GitHub Actions and then compiled and installed on the user's OnePlus using Termux. Batch 2.5 changes are currently tested by CI; the one-tap Termux callback and automatic APK transfer still require phone testing.
 
 
+## BuildDeck 0.3.4: One-project cleanup
+
+Use **Projects → Clean up duplicates • Keep one project** to select the single real Gradle source project you want to maintain (the GitHub-linked BuildDeck is recommended). BuildDeck archives the other local project copies, hides them from Projects, preserves existing APKs in the Vault, and offers a separate confirmation to rebuild the kept project. **Archived projects (N) • Restore** reverses cleanup; no GitHub repos or external Downloads are deleted.
+
+[Safe cleanup instructions](docs/BATCH34_ONE_PROJECT_CLEANUP.md)
+
 ## Batch 3.1: Guard against APK-as-source imports (v0.3.1)
 
 If Build Requests says **Missing Gradle settings file (exit 6)** and the project shows `res/color/...` files rather than `settings.gradle.kts`, a compiled APK or incomplete archive was likely imported as source. **Projects → GitHub Workspace → Import GitHub source** and select the real source repository, such as `luischairez12-ui/BuildDeck`. A complete Gradle project must include its settings file and build scripts.
