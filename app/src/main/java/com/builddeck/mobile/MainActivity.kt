@@ -440,11 +440,24 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                             onInstall = ::installRelease
                         )
                     }
-                    section == "Projects" -> ProjectHome(projects, releases.size,
+                    section == "Dashboard" -> NovaDashboard(
+                        projects = projects,
+                        releases = releases,
+                        builds = run { buildRevision; aiControl.buildRecords() },
+                        activeLink = projects.firstOrNull()?.let { githubWorkspace.link(it) },
+                        onProject = { selectedId = it.id },
+                        onBuild = { buildConfirm = it },
+                        onProjects = { section = "Projects" },
+                        onBuilds = { section = "Builds" },
+                        onVault = { section = "Vault" },
+                        onGitHub = { section = "Projects" },
+                        onImport = { zipPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }
+                    )
+                    section == "Projects" -> NovaProjects(projects, releases.size,
                         archivedCount = archivedProjects.size,
                         onCleanup = { cleanupOpen = true },
-                        onRestoreArchive = { archiveRestoreOpen = true },
-                        githubAccount = githubAccount, githubBusy = busy,
+                        onRestore = { archiveRestoreOpen = true },
+                        githubAccount = githubAccount, working = busy,
                         onGitHubConnect = { token ->
                             scope.launch {
                                 busy = true
@@ -473,17 +486,73 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                                 finally { busy = false }
                             }
                         },
-                        onImport = { zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*")) },
+                        onImportZip = { zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*")) },
                         onSelect = { selectedId = it.id }
                     )
-                    section == "Releases" -> ReleaseHome(releases, projects, onSelect = { selectedId = it }, onInstall = ::installRelease)
-                    else -> SettingsPage(outputConnected,
+                    section == "Builds" -> NovaBuildConsole(
+                        projects = projects,
+                        records = run { buildRevision; aiControl.buildRecords() },
+                        outputConnected = outputConnected,
+                        onBuild = { project -> buildConfirm = project },
+                        onImportApk = { project ->
+                            importApkFor = project
+                            apkPicker.launch(arrayOf("application/vnd.android.package-archive",
+                                "application/octet-stream", "*/*"))
+                        },
+                        onViewLog = { record ->
+                            try { visibleLog = aiControl.buildLog(record) }
+                            catch (error: Exception) { notify("Cannot read log: " + error.message) }
+                        },
+                        onImportLog = { record ->
+                            logForBuild = record
+                            logPicker.launch(arrayOf("text/plain", "application/octet-stream", "*/*"))
+                        },
+                        onDismiss = { record ->
+                            aiControl.dismissBuild(record.id)
+                            buildRevision++
+                        },
+                        onScan = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    outputScanResult = withContext(Dispatchers.IO) {
+                                        outputCollector.scanSummary(store, aiControl)
+                                    }
+                                    buildRevision++
+                                    reload()
+                                } catch (error: Exception) {
+                                    outputScanResult = "Output scan failed: " + error.message
+                                } finally { busy = false }
+                            }
+                        },
+                        onConnectOutput = { outputPicker.launch(null) }
+                    )
+                    section == "Vault" -> NovaVault(
+                        releases = releases,
+                        projects = projects,
+                        onSelectProject = { selectedId = it },
+                        onInstall = ::installRelease,
+                        onImport = { project ->
+                            importApkFor = project
+                            apkPicker.launch(arrayOf("application/vnd.android.package-archive",
+                                "application/octet-stream", "*/*"))
+                        }
+                    )
+                    else -> NovaSettings(
+                        outputConnected = outputConnected,
+                        githubAccount = githubAccount,
+                        darkMode = novaDarkMode,
+                        onDarkMode = { dark ->
+                            novaDarkMode = dark
+                            context.getSharedPreferences("nova_studio", Context.MODE_PRIVATE)
+                                .edit().putBoolean("dark_mode", dark).apply()
+                        },
                         onConnect = { outputPicker.launch(null) },
                         onDisconnect = {
                             outputCollector.disconnect()
                             outputConnected = false
-                        },
-                        githubAccount = githubAccount)
+                        }
+                    )
                 }
                 if (busy) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter))
