@@ -229,12 +229,13 @@ internal fun NovaVault(
     onInstall: (Release) -> Unit,
     onImport: (Project) -> Unit
 ) {
-    var search by remember { mutableStateOf("") }
-    val visible = releases.filter { it.name.contains(search, ignoreCase = true) }
     val context = LocalContext.current
+    var search by remember { mutableStateOf("") }
+    var detailsFor by remember { mutableStateOf<Release?>(null) }
+    val visible = releases.filter { it.name.contains(search, ignoreCase = true) }
     LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { NovaHeader("APK Vault", "Your private collection of finished Android apps.") }
+        item { NovaHeader("APK Vault", "Your finished APKs, with version and update checks.") }
         item {
             OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(),
                 singleLine = true, placeholder = { Text("⌕  Search APKs") },
@@ -261,7 +262,7 @@ internal fun NovaVault(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(color = NovaBlue.copy(alpha = .09f),
                         shape = RoundedCornerShape(13.dp)) {
-                        Box(Modifier.size(45.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
                             Text("APK", color = NovaBlue, fontWeight = FontWeight.ExtraBold,
                                 style = MaterialTheme.typography.labelMedium)
                         }
@@ -275,26 +276,80 @@ internal fun NovaVault(
                                 novaDate(release.added))
                     }
                 }
-                if (details != null) Text(details.verdict,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (details.warning) NovaRed else NovaGreen)
+                if (details != null) {
+                    Text(details.packageId, style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(details.verdict,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (details.warning) NovaRed else
+                            if (details.updateState == "UPDATE") NovaGreen
+                            else MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (details.installedVersion != null)
+                        NovaHint("Installed v" + details.installedVersion +
+                            " (" + details.installedVersionCode + ") • " + details.signatureState)
+                } else {
+                    Text("APK metadata unavailable — verify the file before installing.",
+                        color = NovaRed, style = MaterialTheme.typography.bodySmall)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(projects.firstOrNull { it.id == release.projectId }?.name ?: "Archived project",
                         modifier = Modifier.weight(1f), maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (projects.any { it.id == release.projectId })
-                        TextButton(onClick = { onSelectProject(release.projectId) }) {
-                            Text("Project", color = NovaBlue)
-                        }
-                    Button(onClick = { onInstall(release) },
-                        colors = ButtonDefaults.buttonColors(containerColor = NovaBlue)) {
-                        Text("Install")
+                    TextButton(onClick = { detailsFor = release }) {
+                        Text("Details", color = NovaBlue)
+                    }
+                    Button(
+                        onClick = { onInstall(release) },
+                        enabled = details != null && !details.warning,
+                        colors = ButtonDefaults.buttonColors(containerColor = NovaBlue)
+                    ) {
+                        Text(when (details?.updateState) {
+                            "UPDATE" -> "Update"
+                            "SAME_VERSION" -> "Reinstall"
+                            "DOWNGRADE", "WRONG_SIGNATURE" -> "Blocked"
+                            else -> "Install"
+                        })
+                    }
+                }
+                if (projects.any { it.id == release.projectId }) {
+                    TextButton(onClick = { onSelectProject(release.projectId) }) {
+                        Text("Open source project ›", color = NovaBlue)
                     }
                 }
             }
         }
+        item { NovaHint("Android always shows its own installer confirmation. BuildDeck never silently installs an APK.") }
+    }
+    if (detailsFor != null) {
+        val selected = detailsFor!!
+        val details = remember(selected.path) { ApkInspector.inspect(context, selected.path) }
+        AlertDialog(
+            onDismissRequest = { detailsFor = null },
+            title = { Text("APK details") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(selected.name, fontWeight = FontWeight.Bold)
+                    if (details == null) {
+                        Text("Could not read APK metadata. Check that this is a valid APK.")
+                    } else {
+                        Text("Package: " + details.packageId)
+                        Text("APK: v" + details.version + " (" + details.versionCode + ")")
+                        Text("Installed: " + if (details.installedVersion == null)
+                            "No installed match visible" else
+                            "v" + details.installedVersion + " (" + details.installedVersionCode + ")")
+                        Text("Signature: " + details.signatureState)
+                        Text(details.verdict,
+                            color = if (details.warning) NovaRed else NovaGreen)
+                    }
+                    NovaHint("Installation is handled by Android. Unknown installed packages cannot be certified as compatible.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { detailsFor = null }) { Text("Close") }
+            }
+        )
     }
 }
 
@@ -363,7 +418,7 @@ internal fun NovaSettings(
         }
         item {
             NovaCard {
-                Text("BuildDeck v0.4.2 • Nova Studio",
+                Text("BuildDeck v0.4.3 • Smart Build Pipeline",
                     fontWeight = FontWeight.Bold)
                 NovaHint("Restored the original blue-layer brand mark and top hero artwork. Nova Studio retains your projects, GitHub connection, APK Vault and local builder.")
                 NovaHint("Remote ChatGPT phone access is not enabled.")
