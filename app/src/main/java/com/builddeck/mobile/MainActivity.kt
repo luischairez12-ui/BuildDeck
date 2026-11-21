@@ -512,7 +512,31 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                             val kept = projects.firstOrNull { it.id == keeperId }
                             selectedId = keeperId
                             notify("Archived $count older project copies. Your APKs are preserved.")
-                            if (buildAfter && kept != null) buildConfirm = kept
+                            if (buildAfter && kept != null) {
+                                if (githubWorkspace.link(kept) != null) {
+                                    try {
+                                        val review = withContext(Dispatchers.IO) {
+                                            incomingBridge.check(kept)
+                                        }
+                                        val eligible = review.changes.filter {
+                                            it.conflict == null && it.text != null
+                                        }
+                                        if (review.changes.isNotEmpty() || review.skipped > 0) {
+                                            incomingProject = kept
+                                            incomingReview = review
+                                            incomingSelected = eligible.map { it.path }.toSet()
+                                            incomingBuildAfter = true
+                                            notify("Review GitHub updates before rebuilding the kept project.")
+                                        } else {
+                                            buildConfirm = kept
+                                        }
+                                    } catch (error: Exception) {
+                                        notify("Project kept, but GitHub refresh failed: ${error.message}. Fetch changes before building.")
+                                    }
+                                } else {
+                                    buildConfirm = kept
+                                }
+                            }
                         } catch (error: Exception) {
                             reload()
                             notify("Project cleanup needs attention: ${error.message}")
