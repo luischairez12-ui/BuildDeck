@@ -35,7 +35,8 @@ object LocalBuildBridge {
             putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
             putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf(
                 "-s", "--", handoff.projectId, handoff.zipName,
-                transfer.getValue("apk"), transfer.getValue("log"), recordId, transfer.getValue("stage")
+                transfer.getValue("apk"), transfer.getValue("log"), recordId, transfer.getValue("stage"),
+                handoff.projectLabel
             ))
             putExtra("com.termux.RUN_COMMAND_STDIN", script)
             putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)

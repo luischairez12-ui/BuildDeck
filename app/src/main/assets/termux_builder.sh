@@ -8,6 +8,11 @@ apk_uri="${3:-}"
 log_uri="${4:-}"
 record_id="${5:-}"
 stage_uri="${6:-}"
+project_name="${7:-AndroidApp}"
+if [[ ! "$project_name" =~ ^[A-Za-z0-9._-]{1,40}$ ]]; then
+  echo "Invalid project label" >&2
+  exit 2
+fi
 if [[ -n "$record_id" ]] && [[ ! "$record_id" =~ ^[a-f0-9-]{36}$ ]]; then echo "Invalid build record id"; exit 2; fi
 if [[ ! "$project_id" =~ ^[a-f0-9-]{36}$ ]] || [[ ! "$zip_name" =~ ^[a-f0-9-]{36}_[0-9]+\.zip$ ]] || [[ "$zip_name" != "$project_id"_* ]]; then
   echo "Invalid project id or archive name" >&2
@@ -38,7 +43,17 @@ report_stage() {
 finalize_build() {
   code=$?
   trap - EXIT
-  if [ "$code" -eq 0 ]; then echo "BUILDDECK_RESULT=SUCCESS"; report_stage "Complete"; else echo "BUILDDECK_RESULT=FAILED (exit $code)"; report_stage "Build failed"; fi
+  # Write the authoritative marker directly as well as to tee's stdout.
+  # Process-substitution tee can lag when Android starts the result callback.
+  if [ "$code" -eq 0 ]; then
+    echo "BUILDDECK_RESULT=SUCCESS"
+    printf '%s\n' "BUILDDECK_RESULT=SUCCESS" >> "$log"
+    report_stage "Complete"
+  else
+    echo "BUILDDECK_RESULT=FAILED (exit $code)"
+    printf '%s\n' "BUILDDECK_RESULT=FAILED (exit $code)" >> "$log"
+    report_stage "Build failed"
+  fi
   # Termux's PendingIntent remains authoritative; the authenticated handoff
   # copies the full log to BuildDeck private storage when Android permits it.
   if [[ "$log_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -s "$log" ]; then
@@ -107,7 +122,17 @@ report_stage "Packaging APK"
 dest="$out/${record_id:-$(date +%Y%m%d_%H%M%S)}_$(basename "$apk")"
 cp -f -- "$apk" "$dest"
 echo "BUILDDECK_APK=$dest"
-echo "BUILDDECK_APK_SHA256=$(sha256sum "$dest" | awk '{print $1}')"
+# User-visible convenience copy. The canonical collector backup stays in Out.
+# A failed second copy must never turn a real successful build into a failure.
+friendly="$HOME/storage/downloads/${project_name}-${record_id:0:8}-debug.apk"
+if cp -f -- "$dest" "$friendly"; then
+  echo "BUILDDECK_DOWNLOADS_APK=$friendly"
+else
+  echo "BUILDDECK_DOWNLOADS_COPY=FAILED - use the APK in BuildDeck/Out"
+fi
+apk_sha="$(sha256sum "$dest" | awk '{print $1}')"
+echo "BUILDDECK_APK_SHA256=$apk_sha"
+printf 'BUILDDECK_APK_SHA256=%s\n' "$apk_sha" >> "$log"
 if [[ "$apk_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
   if /system/bin/content write --uri "$apk_uri" < "$dest" >/dev/null 2>&1; then
     echo "BUILDDECK_APK_IMPORTED=YES"
@@ -116,5 +141,6 @@ if [[ "$apk_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /syst
   fi
 fi
 report_stage "APK ready"
-echo "APK ready in Downloads/BuildDeck/Out/$project_id"
+echo "APK backup: Downloads/BuildDeck/Out/$project_id"
+echo "Easy-to-find copy: Downloads/${project_name}-${record_id:0:8}-debug.apk (if permitted)"
 echo "Signing: Gradle debug.keystore in Termux ~/.android/ (keep a private backup)."

@@ -1,6 +1,14 @@
 name: BuildDeck Android Debug APK
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/android-apk.yml'
   push:
     branches: [main]
     paths:
@@ -39,7 +47,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: builddeck-0.4.3-smart-build-ci-fresh-install-apk
+          name: builddeck-0.4.4-apk-delivery-ci-fresh-install-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14

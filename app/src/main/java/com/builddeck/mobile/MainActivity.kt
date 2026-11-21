@@ -591,7 +591,8 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                                 } finally { busy = false }
                             }
                         },
-                        onConnectOutput = { outputPicker.launch(null) }
+                        onConnectOutput = { outputPicker.launch(null) },
+                        onOpenVault = { section = "Vault" }
                     )
                     section == "Vault" -> NovaVault(
                         releases = releases,
@@ -602,6 +603,19 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                             importApkFor = project
                             apkPicker.launch(arrayOf("application/vnd.android.package-archive",
                                 "application/octet-stream", "*/*"))
+                        },
+                        onSaveToDownloads = { release ->
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val name = withContext(Dispatchers.IO) {
+                                        store.exportReleaseToDownloads(release)
+                                    }
+                                    notify("APK saved to Downloads/$name")
+                                } catch (error: Exception) {
+                                    notify("APK export failed: " + error.message)
+                                } finally { busy = false }
+                            }
                         }
                     )
                     else -> NovaSettings(

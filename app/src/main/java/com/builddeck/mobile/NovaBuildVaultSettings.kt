@@ -29,7 +29,8 @@ internal fun NovaBuildConsole(
     onDismiss: (BuildRecord) -> Unit,
     onClearCompleted: (Project) -> Unit,
     onScan: () -> Unit,
-    onConnectOutput: () -> Unit
+    onConnectOutput: () -> Unit,
+    onOpenVault: () -> Unit
 ) {
     val context = LocalContext.current
     var selectedId by remember(projects) { mutableStateOf(projects.firstOrNull()?.id) }
@@ -100,7 +101,8 @@ internal fun NovaBuildConsole(
                     record = newest,
                     stage = BuildTransferProvider.stage(context, newest.id),
                     onViewLog = if (newest.logFile != null) { { onViewLog(newest) } } else null,
-                    onImportApk = if (selected != null) { { onImportApk(selected) } } else null
+                    onImportApk = if (selected != null) { { onImportApk(selected) } } else null,
+                    onOpenVault = onOpenVault
                 )
             }
         }
@@ -120,7 +122,7 @@ internal fun NovaBuildConsole(
                         Text("Scan backup Out folder", color = NovaBlue)
                     }
                 } else {
-                    NovaHint("Manual Downloads backup is available if Android blocks direct transfer.")
+                    NovaHint("If the APK is in Downloads but not Vault, tap Import an APK manually below.")
                     OutlinedButton(onClick = onConnectOutput, modifier = Modifier.fillMaxWidth()) {
                         Text("Connect backup Out folder (optional)", color = NovaBlue)
                     }
@@ -173,6 +175,7 @@ internal fun NovaBuildConsole(
                 stage = BuildTransferProvider.stage(context, record.id),
                 onViewLog = if (record.logFile != null) { { onViewLog(record) } } else null,
                 onImportApk = if (selected != null) { { onImportApk(selected) } } else null,
+                onOpenVault = onOpenVault,
                 compact = true
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -228,7 +231,8 @@ internal fun NovaVault(
     projects: List<Project>,
     onSelectProject: (String) -> Unit,
     onInstall: (Release) -> Unit,
-    onImport: (Project) -> Unit
+    onImport: (Project) -> Unit,
+    onSaveToDownloads: (Release) -> Unit
 ) {
     val context = LocalContext.current
     var search by remember { mutableStateOf("") }
@@ -313,6 +317,9 @@ internal fun NovaVault(
                             else -> "Install"
                         })
                     }
+                }
+                TextButton(onClick = { onSaveToDownloads(release) }) {
+                    Text("↓  Save APK to Downloads", color = NovaBlue)
                 }
                 if (projects.any { it.id == release.projectId }) {
                     TextButton(onClick = { onSelectProject(release.projectId) }) {
@@ -419,7 +426,7 @@ internal fun NovaSettings(
         }
         item {
             NovaCard {
-                Text("BuildDeck v0.4.3 • Smart Build Pipeline",
+                Text("BuildDeck v0.4.4 • APK Delivery Fix",
                     fontWeight = FontWeight.Bold)
                 NovaHint("Restored the original blue-layer brand mark and top hero artwork. Nova Studio retains your projects, GitHub connection, APK Vault and local builder.")
                 NovaHint("Remote ChatGPT phone access is not enabled.")

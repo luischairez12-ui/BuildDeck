@@ -1,4 +1,12 @@
-# BuildDeck — Batch 3 GitHub AI Bridge
+# BuildDeck — Nova Studio
+
+## BuildDeck v0.4.4 — APK Delivery & Downloads
+
+After a successful **BuildDeck-controlled** Termux build, the app now considers the authenticated, delivered build log when verifying completion, not only callback stdout. The bundled builder still preserves `Downloads/BuildDeck/Out/` and also tries to save a readable APK in the phone's main `Downloads` folder. Every APK in the Vault now has **Save APK to Downloads**, and completed build cards can open the Vault directly.
+
+**Manual Termux Gradle builds don't automatically populate the Vault.** Import those APKs with **Vault → + Import APK**. The direct handoff still requires a phone test and can fall back to manual import if Android blocks it.
+
+[Read the v0.4.4 APK delivery changes and safe same-key update steps](docs/BATCH44_APK_DELIVERY.md).
 
 **Native Android app source.** Batch 2 was built by GitHub Actions and then compiled and installed on the user's OnePlus using Termux. Batch 2.5 changes are currently tested by CI; the one-tap Termux callback and automatic APK transfer still require phone testing.
 
