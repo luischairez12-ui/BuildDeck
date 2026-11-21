@@ -426,7 +426,7 @@ internal fun NovaSettings(
         }
         item {
             NovaCard {
-                Text("BuildDeck v0.4.4 • APK Delivery Fix",
+                Text("BuildDeck v0.4.5 • AI Workflow",
                     fontWeight = FontWeight.Bold)
                 NovaHint("Restored the original blue-layer brand mark and top hero artwork. Nova Studio retains your projects, GitHub connection, APK Vault and local builder.")
                 NovaHint("Remote ChatGPT phone access is not enabled.")
