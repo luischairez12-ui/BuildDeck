@@ -564,6 +564,17 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         releases = releases,
                         builds = run { buildRevision; aiControl.buildRecords() },
                         activeLink = projects.firstOrNull()?.let { githubWorkspace.link(it) },
+                        inboxItems = inboxItems,
+                        inboxChecking = inboxChecking,
+                        inboxLastCheckedAt = inboxLastCheckedAt,
+                        linkedProjectCount = projects.count { githubWorkspace.link(it) != null },
+                        onInboxRefresh = {
+                            inboxLastRequestedAt = 0L
+                            inboxCheckRevision++
+                        },
+                        onInboxReview = { id ->
+                            projects.firstOrNull { it.id == id }?.let { checkGithubUpdates(it) }
+                        },
                         onProject = { selectedId = it.id },
                         onBuild = { buildConfirm = it },
                         onProjects = { section = "Projects" },
