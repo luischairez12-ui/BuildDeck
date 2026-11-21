@@ -1,5 +1,9 @@
 package com.builddeck.mobile
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -9,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,6 +49,8 @@ internal fun NovaWorkspace(
 ) {
     var tab by remember(project.id) { mutableStateOf("Overview") }
     var fileSearch by remember(project.id) { mutableStateOf("") }
+    var aiChangeRequest by remember(project.id) { mutableStateOf("") }
+    val context = LocalContext.current
     val filteredFiles = remember(filePaths, fileSearch) {
         filePaths.filter { it.contains(fileSearch, ignoreCase = true) }
     }
@@ -187,6 +194,71 @@ internal fun NovaWorkspace(
                                 }
                             }
                         }
+                    }
+                }
+                item {
+                    NovaSection("AI development workspace")
+                    NovaCard {
+                        Text("Describe it. Review it. Build it.",
+                            fontWeight = FontWeight.Bold)
+                        NovaHint("1. Describe your change below, then copy the request into ChatGPT. " +
+                            "2. Share your current source ZIP or use your connected GitHub project. " +
+                            "3. Import the AI-generated JSON patch below and approve each file before building.")
+                        OutlinedTextField(
+                            value = aiChangeRequest,
+                            onValueChange = { aiChangeRequest = it.take(1500) },
+                            label = { Text("What should AI change?") },
+                            placeholder = { Text("Example: Add a new button that tracks a saved counter") },
+                            minLines = 3, maxLines = 5,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                        Button(
+                            onClick = {
+                                val change = aiChangeRequest.trim()
+                                if (change.isNotEmpty()) {
+                                    val reference = if (repoLink == null) {
+                                        "GitHub: not linked. I will attach a source ZIP exported from BuildDeck."
+                                    } else {
+                                        "GitHub source: https://github.com/${repoLink.owner}/${repoLink.repo} " +
+                                            "(branch ${repoLink.branch}). Use the current source on that branch."
+                                    }
+                                    val message = "Please make this Android project change for me.\\n\\n" +
+                                        "BuildDeck project name (exact): ${project.name}\\n" +
+                                        reference + "\\n\\n" +
+                                        "Requested change: \\n" + change + "\\n\\n" +
+                                        "Use my actual current source, not a guessed project. " +
+                                        "Prepare a downloadable BuildDeck builddeck.patch.v1 JSON with " +
+                                        "projectName exactly equal to ${project.name}, per-file SHA-256 " +
+                                        "preconditions (or absent for new files), a clear summary, and " +
+                                        "requestBuild true. Explain any limitations. I will review and " +
+                                        "approve changes in BuildDeck and build the APK on my phone."
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                                        as? ClipboardManager
+                                    if (clipboard != null) {
+                                        clipboard.setPrimaryClip(
+                                            ClipData.newPlainText("BuildDeck AI change request", message))
+                                        Toast.makeText(context, "AI request copied — paste it into ChatGPT",
+                                            Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "Clipboard unavailable",
+                                            Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            enabled = aiChangeRequest.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Copy AI request for ChatGPT") }
+                        OutlinedButton(onClick = onImportPatch,
+                            enabled = access.write,
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text("Import AI patch for review", color = NovaBlue)
+                        }
+                        if (!access.write) {
+                            NovaHint("Enable Approve AI source edits in the permissions below to review a patch.")
+                        }
+                        NovaHint("No remote phone access or automatic AI edits. You control the ZIP, " +
+                            "the patch, and the final build approval.")
                     }
                 }
                 item { NovaSection("AI permissions") }
