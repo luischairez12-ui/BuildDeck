@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -391,6 +392,7 @@ internal fun NovaDashboard(
 ) {
     val active = projects.firstOrNull()
     val latest = builds.firstOrNull()
+    val context = LocalContext.current
     LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { NovaHero() }
@@ -408,7 +410,7 @@ internal fun NovaDashboard(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 NovaTile("▣", "Projects", "Manage source", Modifier.weight(1f), onProjects)
-                NovaTile("⇅", "GitHub", "Sync & review", Modifier.weight(1f), onGitHub)
+                NovaTile("⇅", "GitHub", if (activeLink != null) "Check updates" else "Connect source", Modifier.weight(1f), onGitHub)
             }
         }
         item {
@@ -419,22 +421,24 @@ internal fun NovaDashboard(
             }
         }
         item { NovaSection("Recent activity", "View builds", onBuilds) }
-        item {
+        if (latest == null) item {
+            NovaCard { NovaHint("No builds yet. Tap Build APK to start.") }
+        } else item {
+            BuildPulseCard(
+                record = latest,
+                stage = BuildTransferProvider.stage(context, latest.id),
+                onViewLog = null,
+                onImportApk = null,
+                compact = true
+            )
+        }
+        if (releases.isNotEmpty()) item {
             NovaCard {
-                if (latest == null) NovaHint("No build requests yet. Start with the blue Build APK button.")
-                else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Build " + latest.id.take(8), fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f))
-                        NovaStatus(latest.status.replace('_', ' '), latest.status == "READY")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Latest APK", fontWeight = FontWeight.SemiBold)
+                        NovaHint(releases.first().name)
                     }
-                    NovaHint(novaDate(latest.submittedAt))
-                    if (latest.note.isNotBlank()) NovaHint(latest.note.take(170))
-                }
-                if (releases.isNotEmpty()) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Text("Latest APK", fontWeight = FontWeight.SemiBold)
-                    NovaHint(releases.first().name)
                     TextButton(onClick = onVault) { Text("Open Vault ›", color = NovaBlue) }
                 }
             }
