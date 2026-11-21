@@ -6,7 +6,7 @@ The Projects screen now includes **Clean up duplicates • Keep one project** wh
 
 - **Keep:** `BuildDeck` — select the row marked **GitHub linked • Gradle source ready**, which contains the BuildDeck GitHub repository and its working build request.
 - **Archive:** `BuildDeck-v0.3.0-local`, `BuildDeck-v0.2.6-local`, and `BuildDeck-main` (provided none of these is the only copy containing work the user wants to keep).
-- **Rebuild:** Leave **Offer to build the kept project after cleanup** checked. Once the archival step finishes, BuildDeck opens its normal separate "Run this project's build?" confirmation dialog; the user must confirm that build. No background build is initiated by cleanup alone.
+- **Rebuild:** Leave **Review latest GitHub changes, then offer to build** checked. After cleanup, BuildDeck checks the kept GitHub-linked project for newer upstream source changes. If changes exist, the user reviews and approves them before a separate "Run this project's build?" confirmation. If the source is already current, BuildDeck shows the build confirmation directly. No source update or build starts without review/approval.
 
 ## Safety
 
