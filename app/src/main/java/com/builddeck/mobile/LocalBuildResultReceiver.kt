@@ -24,7 +24,7 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
                 val store = Store(appContext)
                 val ai = AiControlStore(appContext, store)
                 val record = ai.buildRecords().firstOrNull { it.id == recordId }
-                if (record != null) {
+                if (record != null && record.status != "READY") {
                     val output = bundle?.getString("stdout").orEmpty()
                     val errors = bundle?.getString("stderr").orEmpty()
                     val message = bundle?.getString("errmsg").orEmpty()
