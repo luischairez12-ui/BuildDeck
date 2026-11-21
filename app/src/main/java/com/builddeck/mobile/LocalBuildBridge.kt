@@ -19,6 +19,7 @@ object LocalBuildBridge {
         val logFile = File(handoffDir, "$recordId.log").apply { if (!exists()) createNewFile() }
         val apkUri = FileProvider.getUriForFile(context, "${context.packageName}.files", apkFile)
         val logUri = FileProvider.getUriForFile(context, "${context.packageName}.files", logFile)
+        val transfer = BuildTransferProvider.issue(context, recordId)
         val grants = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         context.grantUriPermission("com.termux", apkUri, grants)
         context.grantUriPermission("com.termux", logUri, grants)
@@ -36,7 +37,10 @@ object LocalBuildBridge {
         val command = Intent("com.termux.RUN_COMMAND").apply {
             setClassName("com.termux", "com.termux.app.RunCommandService")
             putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash")
-            putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-s", "--", handoff.projectId, handoff.zipName, apkUri.toString(), logUri.toString(), recordId))
+            putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf(
+                "-s", "--", handoff.projectId, handoff.zipName,
+                transfer.getValue("apk"), transfer.getValue("log"), recordId, transfer.getValue("stage")
+            ))
             putExtra("com.termux.RUN_COMMAND_STDIN", script)
             putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
             putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", callback)
@@ -47,6 +51,7 @@ object LocalBuildBridge {
         } catch (error: Exception) {
             context.revokeUriPermission(apkUri, grants)
             context.revokeUriPermission(logUri, grants)
+            BuildTransferProvider.revoke(context, recordId)
             callback.cancel()
             throw error
         }
