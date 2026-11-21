@@ -192,6 +192,20 @@ class AiControlStore(private val context: Context, private val store: Store) {
         writeBuilds(existing.filterNot { it.id == recordId })
     }
 
+    /**
+     * Clean the visible history for this project only.
+     * Never remove in-progress or needs-import requests, saved APKs, or source backups.
+     */
+    fun clearCompletedHistory(projectId: String): Int {
+        val existing = buildRecords()
+        val after = existing.filterNot { record ->
+            record.projectId == projectId && record.status in setOf("READY", "FAILED")
+        }
+        val removed = existing.size - after.size
+        if (removed > 0) writeBuilds(after)
+        return removed
+    }
+
     fun importBuildLog(recordId: String, uri: Uri): BuildRecord {
         val records = buildRecords().toMutableList()
         val i = records.indexOfFirst { it.id == recordId }
