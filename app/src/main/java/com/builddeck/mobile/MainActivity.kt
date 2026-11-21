@@ -1033,20 +1033,25 @@ private fun ProjectDetail(
 
 @Composable
 private fun SourceEditor(path: String, content: String, onChange: (String) -> Unit, onSave: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("CODE EDITOR", color = Accent, style = MaterialTheme.typography.labelMedium)
-        Text(path, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(10.dp))
+    Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("SOURCE EDITOR", color = NovaBlue, style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold, letterSpacing = androidx.compose.ui.unit.TextUnit.Unspecified)
+        Text(path, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         OutlinedTextField(
             value = content,
             onValueChange = onChange,
             modifier = Modifier.fillMaxWidth().weight(1f),
-            textStyle = MaterialTheme.typography.bodySmall,
-            label = { Text("Source") },
+            textStyle = MaterialTheme.typography.bodySmall.copy(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+            label = { Text("Editable source") },
+            shape = RoundedCornerShape(18.dp),
             singleLine = false
         )
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("Save file") }
+        NovaPrimaryButton("Save source file", onSave)
+        Text("Local changes are included in your next approved build.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall)
     }
 }
 
