@@ -35,16 +35,24 @@ internal fun BuildPulseCard(
     val imported = record.status == "READY"
     val compiled = record.status in setOf("SUCCESS_NEEDS_IMPORT", "SUCCESS")
     val finished = imported || compiled
-    val infinite = rememberInfiniteTransition(label = "build-running")
-    val pulse by infinite.animateFloat(
-        initialValue = .48f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
-        label = "activity-pulse"
-    )
+    // Only animate a running build. Finished history must not burn the battery.
+    val pulse = if (animating) {
+        val transition = rememberInfiniteTransition(label = "build-running")
+        val fraction by transition.animateFloat(
+            initialValue = .48f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
+            label = "activity-pulse"
+        )
+        fraction
+    } else 1f
     val flash = remember(record.id) { Animatable(0f) }
+    var precedingStatus by remember(record.id) { mutableStateOf(record.status) }
     LaunchedEffect(record.id, record.status) {
+        val wasBuilding = precedingStatus in setOf("SUBMITTED", "RUNNING")
+        precedingStatus = record.status
         flash.snapTo(0f)
-        if (finished) {
+        // Flash only on a real transition, not every time old history is opened.
+        if (finished && wasBuilding) {
             repeat(3) {
                 flash.animateTo(1f, tween(165))
                 flash.animateTo(0f, tween(200))
