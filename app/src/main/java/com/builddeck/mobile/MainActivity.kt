@@ -78,12 +78,16 @@ class MainActivity : ComponentActivity() {
 fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var novaDarkMode by remember {
+        mutableStateOf(context.getSharedPreferences("nova_studio", Context.MODE_PRIVATE)
+            .getBoolean("dark_mode", false))
+    }
     var projects by remember { mutableStateOf(store.projects()) }
     var releases by remember { mutableStateOf(store.releases()) }
     var archivedProjects by remember { mutableStateOf(store.archivedProjects()) }
     var cleanupOpen by remember { mutableStateOf(false) }
     var archiveRestoreOpen by remember { mutableStateOf(false) }
-    var section by remember { mutableStateOf("Projects") }
+    var section by remember { mutableStateOf("Dashboard") }
     var selectedId by remember { mutableStateOf<String?>(null) }
     var editorPath by remember { mutableStateOf<String?>(null) }
     var editorText by remember { mutableStateOf("") }
@@ -282,49 +286,43 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         } catch (ex: Exception) { notify("Unable to open APK: ${ex.message}") }
     }
 
-    val colors = darkColorScheme(
-        primary = Accent,
-        onPrimary = Night,
-        background = Night,
-        surface = Panel,
-        surfaceVariant = Color(0xFF1E2A3E),
+    val colors = if (novaDarkMode) darkColorScheme(
+        primary = NovaBlue,
+        onPrimary = Color.White,
+        background = Color(0xFF0D1424),
+        surface = Color(0xFF192338),
         onSurface = Color.White,
         onBackground = Color.White,
-        secondary = Color(0xFFA7A5FF)
+        onSurfaceVariant = Color(0xFFB7C4D9),
+        outlineVariant = Color(0xFF32445F),
+        secondary = Color(0xFF8BAEFF)
+    ) else lightColorScheme(
+        primary = NovaBlue,
+        onPrimary = Color.White,
+        background = NovaBg,
+        surface = Color.White,
+        onSurface = NovaInk,
+        onBackground = NovaInk,
+        onSurfaceVariant = NovaMuted,
+        outlineVariant = NovaLine,
+        secondary = NovaBlueDeep
     )
 
     MaterialTheme(colorScheme = colors) {
         Scaffold(
             containerColor = Night,
             topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text("BUILDDECK", fontWeight = FontWeight.ExtraBold)
-                            Text("PRIVATE DEVELOPMENT STUDIO", style = MaterialTheme.typography.labelSmall, color = TextSoft)
-                        }
-                    },
-                    navigationIcon = {
-                        if (editorPath != null || selectedId != null) {
-                            TextButton(onClick = {
-                                if (editorPath != null) editorPath = null else selectedId = null
-                            }) { Text("‹ Back") }
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Night)
-                )
+                NovaTopBar(section, projects.firstOrNull { it.id == selectedId }) {
+                    if (editorPath != null) editorPath = null
+                    else selectedId = null
+                }
             },
             bottomBar = {
-                if (editorPath == null && selectedId == null) {
-                    NavigationBar(containerColor = Panel) {
-                        listOf("Projects", "Releases", "Settings").forEachIndexed { index, tab ->
-                            NavigationBarItem(
-                                selected = section == tab,
-                                onClick = { section = tab },
-                                icon = { Text(listOf("▦", "⬡", "⚙")[index]) },
-                                label = { Text(tab) }
-                            )
-                        }
+                if (editorPath == null) {
+                    NovaBottomBar(section) { tab ->
+                        selectedId = null
+                        editorPath = null
+                        section = tab
                     }
                 }
             }
@@ -677,7 +675,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                                     withContext(Dispatchers.IO) { store.importRelease(target, apk) }
                                     reload()
                                     selectedId = null
-                                    section = "Releases"
+                                    section = "Vault"
                                     notify("APK saved under " + target.name)
                                 } catch (error: Exception) {
                                     notify("Could not import shared APK: " + error.message)
