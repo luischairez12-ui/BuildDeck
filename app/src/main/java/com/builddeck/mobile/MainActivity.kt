@@ -342,7 +342,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         )
                     }
                     project != null -> {
-                        ProjectDetail(
+                        NovaWorkspace(
                             project = project,
                             filePaths = remember(project.id, projects, githubRevision) { store.sourceFiles(project) },
                             releases = releases.filter { it.projectId == project.id },
@@ -357,7 +357,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                                 patchForProject = project
                                 patchPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
                             },
-                            onLogImport = { record ->
+                            onImportLog = { record ->
                                 logForBuild = record
                                 logPicker.launch(arrayOf("text/plain", "application/octet-stream", "*/*"))
                             },
@@ -366,7 +366,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                                 catch (ex: Exception) { notify("Cannot read log: ${ex.message}") }
                             },
                             onRestore = { snapshot -> restoreConfirm = project to snapshot },
-                            onEdit = { path ->
+                            onFile = { path ->
                                 try { editorText = store.readText(project, path); editorPath = path }
                                 catch (ex: Exception) { notify("Cannot open file: ${ex.message}") }
                             },
@@ -379,7 +379,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                             },
                             outputConnected = outputConnected,
                             onConnectOutput = { outputPicker.launch(null) },
-                            onScanOutput = {
+                            onScan = {
                                 scope.launch {
                                     busy = true
                                     try {
@@ -395,7 +395,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                                 }
                             },
                             repoLink = run { githubRevision; githubWorkspace.link(project) },
-                            onFetchGitHub = {
+                            onFetch = {
                                 scope.launch {
                                     busy = true
                                     try {
@@ -411,7 +411,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                                     } finally { busy = false }
                                 }
                             },
-                            onReviewSync = {
+                            onSync = {
                                 scope.launch {
                                     busy = true
                                     try {
