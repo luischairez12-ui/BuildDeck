@@ -14,6 +14,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -38,22 +43,49 @@ internal val NovaRed = Color(0xFFC93756)
 internal fun novaDate(time: Long): String =
     SimpleDateFormat("MMM d • h:mm a", Locale.US).format(Date(time))
 
+
+/** Three softly rounded blue layers from the original Nova Studio concept. */
 @Composable
-internal fun NovaLogo(modifier: Modifier = Modifier, size: Dp = 38.dp) {
+internal fun NovaLogo(modifier: Modifier = Modifier, size: Dp = 42.dp) {
     Canvas(modifier.size(size)) {
         val w = this.size.width
         val h = this.size.height
-        val colors = listOf(Color(0xFFA4E0FF), Color(0xFF3F9BFF), NovaBlue)
-        for (i in 2 downTo 0) {
-            val top = h * (0.12f + i * 0.20f)
-            val p = Path().apply {
-                moveTo(w * .50f, top)
-                lineTo(w * .91f, top + h * .16f)
-                lineTo(w * .50f, top + h * .33f)
-                lineTo(w * .09f, top + h * .16f)
+        val layers = listOf(
+            Triple(.45f, Color(0xFF0752D8), Color(0xFF1D7FFF)),
+            Triple(.25f, Color(0xFF176AEF), Color(0xFF50B7FF)),
+            Triple(.05f, Color(0xFF3B8FFF), Color(0xFFB1E5FF))
+        )
+        layers.forEach { (dy, dark, light) ->
+            val cy = h * dy
+            val left = w * .10f
+            val right = w * .90f
+            val diamond = Path().apply {
+                moveTo(w * .44f, cy)
+                quadraticTo(w * .50f, cy - h * .035f, w * .56f, cy)
+                lineTo(right, cy + h * .13f)
+                quadraticTo(w * .96f, cy + h * .17f, right, cy + h * .22f)
+                lineTo(w * .56f, cy + h * .37f)
+                quadraticTo(w * .50f, cy + h * .40f, w * .44f, cy + h * .37f)
+                lineTo(left, cy + h * .22f)
+                quadraticTo(w * .04f, cy + h * .17f, left, cy + h * .13f)
                 close()
             }
-            drawPath(p, colors[i])
+            drawPath(diamond, brush = Brush.linearGradient(
+                colors = listOf(light, dark),
+                start = Offset(w * .2f, cy),
+                end = Offset(w * .8f, cy + h * .38f)))
+            val base = Path().apply {
+                moveTo(left, cy + h * .18f)
+                quadraticTo(w * .04f, cy + h * .22f, left, cy + h * .26f)
+                lineTo(w * .44f, cy + h * .42f)
+                quadraticTo(w * .50f, cy + h * .45f, w * .56f, cy + h * .42f)
+                lineTo(right, cy + h * .26f)
+                quadraticTo(w * .96f, cy + h * .22f, right, cy + h * .18f)
+                lineTo(w * .56f, cy + h * .36f)
+                quadraticTo(w * .50f, cy + h * .40f, w * .44f, cy + h * .36f)
+                close()
+            }
+            drawPath(base, color = dark.copy(alpha = .8f))
         }
     }
 }
@@ -170,14 +202,14 @@ internal fun NovaTopBar(section: String, project: Project?, onBack: () -> Unit) 
             .padding(horizontal = 18.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (project == null) NovaLogo(size = 36.dp)
+        if (project == null) NovaLogo(size = 44.dp)
         else TextButton(onClick = onBack) { Text("‹", color = NovaBlue, fontSize = 26.sp) }
         Spacer(Modifier.width(9.dp))
         Column(Modifier.weight(1f)) {
             Text(project?.name ?: "BuildDeck", fontWeight = FontWeight.ExtraBold,
                 style = MaterialTheme.typography.titleLarge, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
-            Text(if (project == null) "NOVA STUDIO" else "PROJECT WORKSPACE",
+            Text(if (project == null) "Nova Studio" else "PROJECT WORKSPACE",
                 color = NovaBlue, letterSpacing = 1.sp,
                 style = MaterialTheme.typography.labelSmall)
         }
@@ -210,6 +242,145 @@ internal fun NovaBottomBar(section: String, onTab: (String) -> Unit) {
     }
 }
 
+
+/**
+ * Native, scalable Nova Studio hero inspired by the original blue-wave artwork.
+ * The developer/laptop scene is painted off to the right so headlines stay readable.
+ */
+@Composable
+internal fun NovaHero() {
+    val dark = MaterialTheme.colorScheme.background != NovaBg
+    val ink = MaterialTheme.colorScheme.onBackground
+    Box(
+        Modifier.fillMaxWidth().height(178.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(
+                Brush.horizontalGradient(
+                    if (dark) listOf(Color(0xFF182942), Color(0xFF234C91), Color(0xFF1658CF))
+                    else listOf(Color(0xFFFDFEFF), Color(0xFFE4F2FF), Color(0xFFB0D7FF))
+                )
+            )
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val lowerWave = Path().apply {
+                moveTo(0f, h * .75f)
+                cubicTo(w * .22f, h * .53f, w * .37f, h * .95f, w * .58f, h * .65f)
+                cubicTo(w * .72f, h * .45f, w * .84f, h * .53f, w, h * .31f)
+                lineTo(w, h)
+                lineTo(0f, h)
+                close()
+            }
+            drawPath(lowerWave, Brush.verticalGradient(
+                listOf(Color(0xFF80BEFF).copy(alpha=.21f), Color(0xFF2282FC).copy(alpha=.28f))))
+            val waveHighlight = Path().apply {
+                moveTo(0f, h * .91f)
+                cubicTo(w * .28f, h * .70f, w * .37f, h * 1.06f, w * .62f, h * .77f)
+                cubicTo(w * .79f, h * .55f, w * .85f, h * .70f, w, h * .57f)
+            }
+            drawPath(waveHighlight, color = Color.White.copy(alpha = .62f),
+                style = Stroke(width = h * .012f, cap = StrokeCap.Round))
+
+            drawCircle(Brush.radialGradient(
+                listOf(Color(0xFF79E5FF).copy(alpha = .70f), Color.Transparent),
+                center = Offset(w * .82f, h * .48f), radius = w * .33f),
+                radius = w * .33f, center = Offset(w * .82f, h * .48f))
+
+            // Floating glass code card.
+            drawRoundRect(Color.White.copy(alpha = .18f),
+                topLeft = Offset(w * .79f, h * .16f), size = Size(w * .175f, h * .33f),
+                cornerRadius = CornerRadius(h * .06f))
+            for (k in 0..3) {
+                drawLine(Color(0xFFE3FCFF).copy(alpha = .65f),
+                    Offset(w * .82f, h * (.23f + .06f * k)),
+                    Offset(w * (.89f + .02f * (k % 2)), h * (.23f + .06f * k)),
+                    strokeWidth = h * .011f, cap = StrokeCap.Round)
+            }
+
+            // Developer silhouette: shoulder, hoodie, head and cap.
+            val hoodie = Path().apply {
+                moveTo(w * .82f, h * .58f)
+                quadraticTo(w * .91f, h * .45f, w * .98f, h * .56f)
+                lineTo(w * 1.07f, h * .98f)
+                lineTo(w * .72f, h * .98f)
+                quadraticTo(w * .75f, h * .73f, w * .82f, h * .58f)
+                close()
+            }
+            drawPath(hoodie, Brush.linearGradient(
+                listOf(Color(0xFF0D3C92), Color(0xFF116AD5)),
+                Offset(w * .76f, h * .58f), Offset(w, h)))
+            drawCircle(brush = Brush.linearGradient(
+                listOf(Color(0xFF2168B9), Color(0xFF082A65))),
+                radius = h * .115f, center = Offset(w * .875f, h * .45f))
+            val cap = Path().apply {
+                moveTo(w * .795f, h * .40f)
+                quadraticTo(w * .84f, h * .27f, w * .91f, h * .32f)
+                quadraticTo(w * .94f, h * .36f, w * .96f, h * .42f)
+                lineTo(w * .80f, h * .43f)
+                close()
+            }
+            drawPath(cap, color = Color(0xFF0D377A))
+            drawLine(Color(0xFF0B2E70),
+                Offset(w * .78f, h * .43f), Offset(w * .94f, h * .45f),
+                strokeWidth = h * .03f, cap = StrokeCap.Round)
+
+            // The glowing screen/laptop sits in front of the developer.
+            val laptop = Path().apply {
+                moveTo(w * .62f, h * .54f)
+                lineTo(w * .79f, h * .54f)
+                lineTo(w * .83f, h * .84f)
+                lineTo(w * .65f, h * .84f)
+                close()
+            }
+            drawPath(laptop, Brush.linearGradient(
+                listOf(Color(0xFF073C94), Color(0xFF207DFF)),
+                Offset(w * .64f, h * .55f), Offset(w * .84f, h * .85f)))
+            drawPath(laptop, Color(0xFF8DEBFF).copy(alpha = .92f),
+                style = Stroke(width = h * .012f))
+            drawLine(Color(0xFFB2F8FF), Offset(w * .71f, h * .65f),
+                Offset(w * .69f, h * .69f), strokeWidth = h * .016f, cap = StrokeCap.Round)
+            drawLine(Color(0xFFB2F8FF), Offset(w * .69f, h * .69f),
+                Offset(w * .71f, h * .72f), strokeWidth = h * .016f, cap = StrokeCap.Round)
+            drawLine(Color(0xFFB2F8FF), Offset(w * .75f, h * .65f),
+                Offset(w * .77f, h * .69f), strokeWidth = h * .016f, cap = StrokeCap.Round)
+            drawLine(Color(0xFFB2F8FF), Offset(w * .77f, h * .69f),
+                Offset(w * .75f, h * .72f), strokeWidth = h * .016f, cap = StrokeCap.Round)
+            drawLine(Color(0xFFB2F8FF), Offset(w * .735f, h * .64f),
+                Offset(w * .725f, h * .74f), strokeWidth = h * .010f, cap = StrokeCap.Round)
+            drawLine(Color(0xFF63B5FF), Offset(w * .61f, h * .86f),
+                Offset(w * .88f, h * .86f), strokeWidth = h * .028f, cap = StrokeCap.Round)
+
+            // Smaller floating layers echo the original BuildDeck logo.
+            for (i in 2 downTo 0) {
+                val y = h * (.16f + i * .085f)
+                val tile = Path().apply {
+                    moveTo(w * .72f, y)
+                    lineTo(w * .79f, y + h * .04f)
+                    lineTo(w * .72f, y + h * .085f)
+                    lineTo(w * .65f, y + h * .04f)
+                    close()
+                }
+                drawPath(tile, Brush.linearGradient(
+                    listOf(Color(0xFFA0EFFF), Color(0xFF2389FE))))
+            }
+        }
+        Column(Modifier.align(Alignment.CenterStart).fillMaxWidth(.62f)
+            .padding(start = 16.dp, top = 2.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("YOUR MOBILE STUDIO", color = NovaBlue,
+                style = MaterialTheme.typography.labelSmall, letterSpacing = 1.1.sp,
+                fontWeight = FontWeight.Bold)
+            Text("Build something\ngreat.", color = if (dark) Color.White else NovaInk,
+                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold,
+                lineHeight = 29.sp)
+            Text("Code  •  Build  •  Ship",
+                color = if (dark) Color(0xFFDAECFF) else NovaMuted,
+                style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
 @Composable
 internal fun NovaDashboard(
     projects: List<Project>, releases: List<Release>,
@@ -222,7 +393,7 @@ internal fun NovaDashboard(
     val latest = builds.firstOrNull()
     LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { NovaHeader("Your app studio.", "Build, sync, and ship Android apps from one place.") }
+        item { NovaHero() }
         item {
             if (active != null) NovaBanner(active, activeLink) { onProject(active) }
             else NovaCard {
