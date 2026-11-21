@@ -83,7 +83,7 @@ internal fun NovaWorkspace(
                     Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                         NovaTile("◈", "Releases", releases.size.toString() + " APKs",
                             Modifier.weight(1f), onImportApk)
-                        NovaTile("⚙", "Tools", "Backups & AI", Modifier.weight(1f)) {
+                        NovaTile("⚙", "AI Studio", "Patches & backups", Modifier.weight(1f)) {
                             tab = "Tools"
                         }
                     }
