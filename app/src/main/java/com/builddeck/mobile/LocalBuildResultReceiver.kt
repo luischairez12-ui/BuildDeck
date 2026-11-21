@@ -30,14 +30,24 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
                     val message = bundle?.getString("errmsg").orEmpty()
                     val exit = bundle?.getInt("exitCode", Int.MIN_VALUE) ?: Int.MIN_VALUE
                     val internalErr = bundle?.getInt("err", Activity.RESULT_OK) ?: Int.MIN_VALUE
+                    // Termux sometimes finishes before all stdout reaches the callback.
+                    // Its authenticated write-only handoff also delivers a full log.
+                    // Trust only a real exitCode 0 + matching success marker and APK hash.
+                    val resultDir = File(appContext.filesDir, "builddeck_results")
+                    val handoffLog = File(resultDir, "$recordId.log")
+                    val diskOutput = if (handoffLog.isFile &&
+                        handoffLog.length() in 1L..4_000_000L) {
+                        runCatching { handoffLog.readText() }.getOrDefault("")
+                    } else ""
+                    val completeOutput = output + "\n" + diskOutput
                     val succeeded = exit == 0 && internalErr == Activity.RESULT_OK &&
-                        output.contains("BUILDDECK_RESULT=SUCCESS")
+                        completeOutput.contains("BUILDDECK_RESULT=SUCCESS")
                     val console = "Exit code: $exit / Termux status: $internalErr\n" +
-                        output + "\n" + errors + "\n" + message
+                        completeOutput + "\n" + errors + "\n" + message
                     val project = store.projects().firstOrNull { it.id == record.projectId }
-                    val apk = File(File(appContext.filesDir, "builddeck_results"), "$recordId.apk")
-                    val expectedSha = output.lineSequence()
-                        .firstOrNull { it.startsWith("BUILDDECK_APK_SHA256=") }
+                    val apk = File(resultDir, "$recordId.apk")
+                    val expectedSha = completeOutput.lineSequence()
+                        .lastOrNull { it.startsWith("BUILDDECK_APK_SHA256=") }
                         ?.substringAfter('=')
                         ?.trim()
                         ?.takeIf { it.matches(Regex("[a-f0-9]{64}")) }
