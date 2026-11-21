@@ -199,6 +199,11 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
             }
             inboxItems = result
             inboxLastCheckedAt = System.currentTimeMillis()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // A new app-resume event or project import may restart this effect.
+            // Don't suppress the next scan due to a cancelled attempt.
+            inboxLastRequestedAt = 0L
+            throw cancelled
         } finally {
             inboxChecking = false
         }
