@@ -5,7 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import androidx.core.content.FileProvider
+import java.security.MessageDigest
 import java.io.File
 
 /**
@@ -36,13 +36,37 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
                         output + "\n" + errors + "\n" + message
                     val project = store.projects().firstOrNull { it.id == record.projectId }
                     val apk = File(File(appContext.filesDir, "builddeck_results"), "$recordId.apk")
+                    val expectedSha = output.lineSequence()
+                        .firstOrNull { it.startsWith("BUILDDECK_APK_SHA256=") }
+                        ?.substringAfter('=')
+                        ?.trim()
+                        ?.takeIf { it.matches(Regex("[a-f0-9]{64}")) }
+                    val validDigest = if (succeeded && expectedSha != null &&
+                        apk.isFile && apk.length() in 101L..(500L * 1024 * 1024)) {
+                        runCatching {
+                            val sha = MessageDigest.getInstance("SHA-256")
+                            apk.inputStream().buffered().use { input ->
+                                val buffer = ByteArray(65_536)
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count == -1) break
+                                    sha.update(buffer, 0, count)
+                                }
+                            }
+                            val actual = sha.digest().joinToString("") { "%02x".format(it) }
+                            MessageDigest.isEqual(
+                                actual.toByteArray(Charsets.US_ASCII),
+                                expectedSha.toByteArray(Charsets.US_ASCII)
+                            )
+                        }.getOrDefault(false)
+                    } else false
                     var saved = false
-                    if (succeeded && project != null && apk.length() > 100L) {
+                    if (succeeded && project != null && validDigest) {
                         try {
-                            store.importLocalRelease(project, apk, "BuildDeck-local-${System.currentTimeMillis()}.apk")
+                            store.importLocalRelease(project, apk, "BuildDeck-$recordId.apk")
                             saved = true
                         } catch (error: Exception) {
-                            Log.w("BuildDeck", "Automatic APK import failed; manual import remains available", error)
+                            Log.w("BuildDeck", "Direct APK import failed; existing manual fallback remains", error)
                         }
                     }
                     val status = when {
@@ -51,8 +75,10 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
                         else -> "SUCCESS_NEEDS_IMPORT"
                     }
                     val note = when (status) {
-                        "READY" -> "APK compiled and saved to APK Vault"
-                        "SUCCESS_NEEDS_IMPORT" -> "Compiled; import APK from Downloads/BuildDeck/Out"
+                        "READY" -> "APK compiled, verified and automatically saved in APK Vault"
+                        "SUCCESS_NEEDS_IMPORT" -> if (apk.length() > 100L && !validDigest)
+                            "Compiled; direct transfer did not pass integrity check. Import from Downloads/BuildDeck/Out."
+                            else "Compiled; automatic transfer unavailable. Import APK from Downloads/BuildDeck/Out."
                         else -> (message.ifBlank { errors.takeLast(150).ifBlank { output.takeLast(150) } })
                             .ifBlank { "Termux build failed with exit code $exit" }
                     }
@@ -61,12 +87,8 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
                         runCatching { OutputCollector(appContext).reconcile(store, ai) }
                     }
                 }
-                // Only revoke grants after Termux has completed the command.
-                val dir = File(appContext.filesDir, "builddeck_results")
-                for (file in listOf(File(dir, "$recordId.apk"), File(dir, "$recordId.log"))) {
-                    val uri = FileProvider.getUriForFile(appContext, "${appContext.packageName}.files", file)
-                    appContext.revokeUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                }
+                // Expire the one-time write-only upload capability on completion.
+                BuildTransferProvider.revoke(appContext, recordId)
             } catch (error: Exception) {
                 Log.e("BuildDeck", "Unable to process Termux result", error)
                 runCatching {
@@ -75,6 +97,7 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
                     )
                 }
             } finally {
+                BuildTransferProvider.revoke(appContext, recordId)
                 pending.finish()
             }
         }.start()
