@@ -73,7 +73,23 @@ class Store(private val context: Context) {
         return old.size
     }
 
-    private fun archiveProject(project: Project, keeper: Project) {
+    @Synchronized
+    fun archiveSmartVersions(ids: Set<String>, protectedIds: Set<String>): Int {
+        var count = 0
+        for ((_, group) in SmartStudio.groups(this, projects())) {
+            val keeper = group.first()
+            val keep = group.take(3).map { it.id }.toSet() + protectedIds
+            for (project in group) {
+                if (project.id in ids && project.id !in keep) {
+                    archiveProject(project, keeper, keepOwnership = true)
+                    count++
+                }
+            }
+        }
+        return count
+    }
+
+    private fun archiveProject(project: Project, keeper: Project, keepOwnership: Boolean = false) {
         val source = File(root, project.id)
         val archive = File(archivedRoot, project.id)
         require(source.isDirectory) { "Project source missing: ${project.name}" }
@@ -93,7 +109,7 @@ class Store(private val context: Context) {
             saveArchivedProjects(previousArchives + entry)
             // Existing APKs stay visible in the Vault under the one surviving project.
             saveReleases(previousReleases.map {
-                if (it.projectId == project.id) it.copy(projectId = keeper.id) else it
+                if (!keepOwnership && it.projectId == project.id) it.copy(projectId = keeper.id) else it
             })
             saveProjects(existingProjects.filterNot { it.id == project.id })
         } catch (error: Exception) {
