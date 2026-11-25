@@ -426,6 +426,7 @@ class Store(private val context: Context) {
             require(dest.length() > 100) { "APK is empty or invalid" }
             val release = Release(id, project.id, name, dest.absolutePath, System.currentTimeMillis())
             saveReleases(releases() + release)
+            SmartVault(context).exportIfConfigured(release, project)
             return release
         } catch (ex: Exception) {
             dest.delete()
@@ -449,6 +450,7 @@ class Store(private val context: Context) {
             val name = if (safeName.endsWith(".apk", ignoreCase = true)) safeName else "$safeName.apk"
             val release = Release(id, project.id, name, target.absolutePath, System.currentTimeMillis())
             saveReleases(releases() + release)
+            SmartVault(context).exportIfConfigured(release, project)
             return release
         } catch (error: Exception) {
             target.delete()
