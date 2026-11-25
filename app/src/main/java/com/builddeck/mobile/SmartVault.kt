@@ -78,7 +78,7 @@ internal class SmartVault(private val context: Context) {
                     val hash = SmartStudio.digest(temp)
                     if (hash in known) { duplicates++; continue }
                     val packageId = ApkInspector.inspect(context, temp.path)?.packageId
-                    val project = byPackage[packageId]?.firstOrNull()
+                    val project = packageId?.let { byPackage[it]?.firstOrNull() }
                     if (project == null) { skipped++; continue }
                     store.importRelease(project, file.uri)
                     known.add(hash); added++
