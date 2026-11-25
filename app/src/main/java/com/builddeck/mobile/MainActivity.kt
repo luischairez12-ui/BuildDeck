@@ -727,6 +727,8 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         releases = releases,
                         projects = projects,
                         onSelectProject = { selectedId = it },
+                        groupNames = (projects + archivedProjects.map { it.project }).associate { it.id to SmartStudio.title(it.name) } +
+                            smartGroups.values.flatMap { versions -> versions.map { it.id to SmartStudio.title(versions.first().name) } }.toMap(),
                         onInstall = ::installRelease,
                         onImport = { project ->
                             importApkFor = project
