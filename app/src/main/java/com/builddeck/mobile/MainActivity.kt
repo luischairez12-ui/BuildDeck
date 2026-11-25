@@ -89,6 +89,26 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
     var releases by remember { mutableStateOf(store.releases()) }
     var archivedProjects by remember { mutableStateOf(store.archivedProjects()) }
     var cleanupOpen by remember { mutableStateOf(false) }
+    var smartGroups by remember { mutableStateOf<Map<String, List<Project>>>(emptyMap()) }
+    var cleanerSizes by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    var cleanerDuplicates by remember { mutableStateOf<Store.DuplicateApks?>(null) }
+    val smartVault = remember(context) { SmartVault(context) }
+    var storageRevision by remember { mutableIntStateOf(0) }
+    var smartScanRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(projects) {
+        smartGroups = withContext(Dispatchers.IO) { SmartStudio.groups(store, projects) }
+    }
+    LaunchedEffect(cleanupOpen, projects, releases) {
+        if (cleanupOpen) {
+            cleanerSizes = null
+            cleanerDuplicates = null
+            cleanerSizes = withContext(Dispatchers.IO) {
+                projects.sumOf { SmartStudio.size(store.sourceDir(it)) } to
+                    releases.distinctBy { it.path }.sumOf { File(it.path).length() }
+            }
+            cleanerDuplicates = withContext(Dispatchers.IO) { store.duplicateApks() }
+        }
+    }
     var archiveRestoreOpen by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf("Dashboard") }
     var selectedId by remember { mutableStateOf<String?>(null) }
@@ -128,6 +148,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
     var inboxLastCheckedAt by remember { mutableLongStateOf(0L) }
     var inboxLastRequestedAt by remember { mutableLongStateOf(0L) }
     var inboxCheckRevision by remember { mutableIntStateOf(0) }
+    var smartScanRevision by remember { mutableIntStateOf(0) }
 
     fun notify(message: String) { Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
     fun reload() { projects = store.projects(); releases = store.releases(); archivedProjects = store.archivedProjects() }
@@ -143,6 +164,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                 outputConnected = outputCollector.isConnected()
                 // A read-only check on launch/return, throttled by the scan effect.
                 inboxCheckRevision++
+                smartScanRevision++
             }
         }
         owner?.lifecycle?.addObserver(observer)
@@ -209,9 +231,24 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         }
     }
 
-    // While a project is open, read granted build logs for live stages and APKs.
-    LaunchedEffect(selectedId, outputConnected) {
-        if (selectedId != null && outputConnected) {
+    fun scanSmartVault() {
+        if (smartScanRunning) return
+        smartScanRunning = true
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { smartVault.scan(store) }
+                reload(); notify(result)
+            } catch (e: Exception) { notify("APK scan failed: " + e.message) }
+            finally { smartScanRunning = false }
+        }
+    }
+    LaunchedEffect(smartScanRevision) {
+        if (smartVault.autoScan() && smartVault.name("scan") != "Not selected") scanSmartVault()
+    }
+
+    // Read granted build logs for live stages and APKs from any screen.
+    LaunchedEffect(outputConnected) {
+        if (outputConnected) {
             while (true) {
                 val updated = withContext(Dispatchers.IO) {
                     runCatching { outputCollector.reconcile(store, aiControl) }.getOrDefault(false)
@@ -294,12 +331,19 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
             }
         }
     }
+    var smartFolderKey by remember { mutableStateOf("scan") }
+    val smartFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try { smartVault.connect(smartFolderKey, uri); storageRevision++; notify("Folder linked") }
+            catch (e: Exception) { notify("Folder access failed: " + e.message) }
+        }
+    }
     val zipPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             busy = true
             try {
                 val project = withContext(Dispatchers.IO) { store.importProject(uri) }
-                reload(); section = "Projects"; selectedId = project.id
+                reload(); section = "Dashboard"; selectedId = null
                 notify("Imported ${project.name}")
             } catch (ex: Exception) { notify("Import failed: ${ex.message}") }
             finally { busy = false }
@@ -587,7 +631,16 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         onVault = { section = "Vault" },
                         onGitHub = { projects.firstOrNull()?.let { checkGithubUpdates(it) }
                             ?: run { section = "Projects" } },
-                        onImport = { zipPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }
+                        onImport = { zipPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                        onViewLog = { record ->
+                            runCatching { aiControl.buildLog(record) }.onSuccess { visibleLog = it }
+                                .onFailure { notify("Cannot read log: " + it.message) }
+                        },
+                        onImportApk = { project ->
+                            importApkFor = project
+                            apkPicker.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*"))
+                        },
+                        onCleaner = { cleanupOpen = true }
                     )
                     section == "Projects" -> NovaProjects(projects, releases.size,
                         archivedCount = archivedProjects.size,
@@ -623,7 +676,8 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                             }
                         },
                         onImportZip = { zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*")) },
-                        onSelect = { selectedId = it.id }
+                        onSelect = { selectedId = it.id },
+                        groups = smartGroups.ifEmpty { projects.associate { it.id to listOf(it) } }
                     )
                     section == "Builds" -> NovaBuildConsole(
                         projects = projects,
@@ -676,11 +730,26 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         releases = releases,
                         projects = projects,
                         onSelectProject = { selectedId = it },
+                        groupNames = (projects + archivedProjects.map { it.project }).associate { it.id to SmartStudio.title(it.name) } +
+                            smartGroups.values.flatMap { versions -> versions.map { it.id to SmartStudio.title(versions.first().name) } }.toMap(),
                         onInstall = ::installRelease,
                         onImport = { project ->
                             importApkFor = project
                             apkPicker.launch(arrayOf("application/vnd.android.package-archive",
                                 "application/octet-stream", "*/*"))
+                        },
+                        onSaveToFolder = { release ->
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val project = projects.firstOrNull { it.id == release.projectId }
+                                        ?: archivedProjects.firstOrNull { it.project.id == release.projectId }?.project
+                                        ?: error("Source project unavailable")
+                                    val name = withContext(Dispatchers.IO) { smartVault.export(release, project) }
+                                    notify("APK saved to " + name)
+                                } catch (e: Exception) { notify("APK export failed: " + e.message) }
+                                finally { busy = false }
+                            }
                         },
                         onSaveToDownloads = { release ->
                             scope.launch {
@@ -700,6 +769,13 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         outputConnected = outputConnected,
                         githubAccount = githubAccount,
                         darkMode = novaDarkMode,
+                        scanFolder = run { storageRevision; smartVault.name("scan") },
+                        destinationFolder = run { storageRevision; smartVault.name("destination") },
+                        autoScan = run { storageRevision; smartVault.autoScan() },
+                        onSmartFolder = { key -> smartFolderKey = key; smartFolderPicker.launch(null) },
+                        onDisconnectSmart = { key -> smartVault.disconnect(key); storageRevision++ },
+                        onAutoScan = { value -> smartVault.setAutoScan(value); storageRevision++ },
+                        onScanSmart = { scanSmartVault() },
                         onDarkMode = { dark ->
                             novaDarkMode = dark
                             context.getSharedPreferences("nova_studio", Context.MODE_PRIVATE)
@@ -718,57 +794,66 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
             }
         }
 
-        if (cleanupOpen && projects.size > 1) {
-            ProjectCleanupDialog(
-                choices = projects.map { source ->
-                    ProjectCleanupChoice(source, store.isGradleProject(source),
-                        githubWorkspace.link(source) != null)
-                },
-                onDismiss = { cleanupOpen = false },
-                onArchive = { keeperId, buildAfter ->
-                    cleanupOpen = false
-                    scope.launch {
-                        busy = true
-                        try {
-                            val count = withContext(Dispatchers.IO) {
-                                store.archiveOtherProjects(keeperId)
-                            }
-                            reload()
-                            val kept = projects.firstOrNull { it.id == keeperId }
-                            selectedId = keeperId
-                            notify("Archived $count older project copies. Your APKs are preserved.")
-                            if (buildAfter && kept != null) {
-                                if (githubWorkspace.link(kept) != null) {
-                                    try {
-                                        val review = withContext(Dispatchers.IO) {
-                                            incomingBridge.check(kept)
-                                        }
-                                        val eligible = review.changes.filter {
-                                            it.conflict == null && it.text != null
-                                        }
-                                        if (review.changes.isNotEmpty() || review.skipped > 0) {
-                                            incomingProject = kept
-                                            incomingReview = review
-                                            incomingSelected = eligible.map { it.path }.toSet()
-                                            incomingBuildAfter = true
-                                            notify("Review GitHub updates before rebuilding the kept project.")
-                                        } else {
-                                            buildConfirm = kept
-                                        }
-                                    } catch (error: Exception) {
-                                        notify("Project kept, but GitHub refresh failed: ${error.message}. Fetch changes before building.")
-                                    }
-                                } else {
-                                    buildConfirm = kept
-                                }
-                            }
-                        } catch (error: Exception) {
-                            reload()
-                            notify("Project cleanup needs attention: ${error.message}")
-                        } finally { busy = false }
-                    }
+        if (cleanupOpen) {
+            val records = run { buildRevision; aiControl.buildRecords() }
+            val protectedIds = SmartStudio.protected(context) +
+                projects.filter { githubWorkspace.link(it) != null }.map { it.id } +
+                records.filter { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT") }.map { it.projectId } +
+                smartGroups.values.mapNotNull { versions ->
+                    versions.firstOrNull { p -> records.any { it.projectId == p.id && it.status == "READY" } ||
+                        releases.any { it.projectId == p.id } }?.id
                 }
-            )
+            val candidates = smartGroups.values.flatMap { it.drop(3) }.filter { it.id !in protectedIds }
+            val safeToClean = !busy && !smartScanRunning && records.none { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT") }
+            AlertDialog(onDismissRequest = { cleanupOpen = false },
+                title = { Text("Smart Cleaner") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val sizes = cleanerSizes
+                        Text(if (sizes == null) "Measuring storage..." else
+                            "Sources: " + (sizes.first / 1048576) + " MB • APKs: " + (sizes.second / 1048576) + " MB")
+                        Text("Keep the newest 3 versions per workspace, linked projects, active builds, and last saved APK versions. Protected versions are never archived.")
+                        Text(candidates.size.toString() + " older sources can be archived. This is reversible and does not free disk space.")
+                        LazyColumn(Modifier.heightIn(max = 220.dp)) {
+                            items(candidates, key = { it.id }) { Text(it.name, style = MaterialTheme.typography.bodySmall) }
+                        }
+                        val duplicates = cleanerDuplicates
+                        NovaHint(if (duplicates == null) "Checking for identical APK files..." else
+                            duplicates.files.toString() + " duplicate APK files • " + (duplicates.bytes / 1048576) + " MB recoverable")
+                        if (duplicates != null && duplicates.files > 0) {
+                            OutlinedButton(enabled = safeToClean, onClick = {
+                                cleanupOpen = false
+                                scope.launch {
+                                    busy = true
+                                    try {
+                                        val result = withContext(Dispatchers.IO) { store.compactDuplicateApks() }
+                                        reload(); notify("Removed " + result.files + " identical physical copies; all Vault entries preserved.")
+                                    } catch (e: Exception) { reload(); notify("Compaction failed: " + e.message) }
+                                    finally { busy = false }
+                                }
+                            }, modifier = Modifier.fillMaxWidth()) { Text("Consolidate identical APKs") }
+                        }
+                        NovaHint("Consolidation retains every Vault record. No external files or Termux caches are removed.")
+                        if (!safeToClean) NovaHint("Finish pending builds and scans before cleaning.")
+                    }
+                },
+                confirmButton = {
+                    TextButton(enabled = candidates.isNotEmpty() && safeToClean, onClick = {
+                        val ids = candidates.map { it.id }.toSet()
+                        cleanupOpen = false
+                        scope.launch {
+                            busy = true
+                            try {
+                                val currentRecords = aiControl.buildRecords()
+                                val keep = protectedIds + SmartStudio.protected(context) + currentRecords.filter { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT") }.map { it.projectId }
+                                val count = withContext(Dispatchers.IO) { store.archiveSmartVersions(ids, keep) }
+                                reload(); notify("Archived " + count + " older versions. APKs preserved.")
+                            } catch (e: Exception) { reload(); notify("Archive needs attention: " + e.message) }
+                            finally { busy = false }
+                        }
+                    }) { Text("Archive older versions") }
+                },
+                dismissButton = { TextButton(onClick = { cleanupOpen = false }) { Text("Cancel") } })
         }
 
         if (archiveRestoreOpen) {

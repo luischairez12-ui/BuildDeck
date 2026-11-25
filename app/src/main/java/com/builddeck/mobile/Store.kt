@@ -31,6 +31,7 @@ data class ArchivedProject(
 
 /** Local-only project storage. Nothing is uploaded to a server or GitHub. */
 class Store(private val context: Context) {
+    companion object { private val releaseLock = Any() }
     private val root = File(context.filesDir, "projects").apply { mkdirs() }
     private val releaseRoot = File(context.filesDir, "releases").apply { mkdirs() }
     private val snapshotRoot = File(context.filesDir, "snapshots").apply { mkdirs() }
@@ -73,7 +74,23 @@ class Store(private val context: Context) {
         return old.size
     }
 
-    private fun archiveProject(project: Project, keeper: Project) {
+    @Synchronized
+    fun archiveSmartVersions(ids: Set<String>, protectedIds: Set<String>): Int {
+        var count = 0
+        for ((_, group) in SmartStudio.groups(this, projects())) {
+            val keeper = group.first()
+            val keep = group.take(3).map { it.id }.toSet() + protectedIds
+            for (project in group) {
+                if (project.id in ids && project.id !in keep) {
+                    archiveProject(project, keeper, keepOwnership = true)
+                    count++
+                }
+            }
+        }
+        return count
+    }
+
+    private fun archiveProject(project: Project, keeper: Project, keepOwnership: Boolean = false) {
         val source = File(root, project.id)
         val archive = File(archivedRoot, project.id)
         require(source.isDirectory) { "Project source missing: ${project.name}" }
@@ -92,8 +109,8 @@ class Store(private val context: Context) {
         try {
             saveArchivedProjects(previousArchives + entry)
             // Existing APKs stay visible in the Vault under the one surviving project.
-            saveReleases(previousReleases.map {
-                if (it.projectId == project.id) it.copy(projectId = keeper.id) else it
+            if (!keepOwnership) saveReleases(previousReleases.map {
+                if (!keepOwnership && it.projectId == project.id) it.copy(projectId = keeper.id) else it
             })
             saveProjects(existingProjects.filterNot { it.id == project.id })
         } catch (error: Exception) {
@@ -388,7 +405,7 @@ class Store(private val context: Context) {
         } finally { temporary.delete() }
     }
 
-    fun importRelease(project: Project, uri: Uri): Release {
+    fun importRelease(project: Project, uri: Uri): Release = synchronized(releaseLock) {
         val name = displayName(uri)
         require(name.lowercase().endsWith(".apk")) { "Select an APK file" }
         val id = UUID.randomUUID().toString()
@@ -410,7 +427,8 @@ class Store(private val context: Context) {
             require(dest.length() > 100) { "APK is empty or invalid" }
             val release = Release(id, project.id, name, dest.absolutePath, System.currentTimeMillis())
             saveReleases(releases() + release)
-            return release
+            SmartVault(context).exportIfConfigured(release, project)
+            release
         } catch (ex: Exception) {
             dest.delete()
             throw ex
@@ -418,7 +436,7 @@ class Store(private val context: Context) {
     }
 
     /** Imports the APK deposited by Termux into this app's write-granted FileProvider. */
-    fun importLocalRelease(project: Project, incoming: File, suggestedName: String): Release {
+    fun importLocalRelease(project: Project, incoming: File, suggestedName: String): Release = synchronized(releaseLock) {
         val inbox = File(context.filesDir, "builddeck_results").canonicalFile
         require(incoming.canonicalFile.parentFile == inbox) { "APK is outside the authorized result inbox" }
         require(incoming.isFile && incoming.length() in 101L..(500L * 1024 * 1024)) { "No valid APK was transferred" }
@@ -433,7 +451,8 @@ class Store(private val context: Context) {
             val name = if (safeName.endsWith(".apk", ignoreCase = true)) safeName else "$safeName.apk"
             val release = Release(id, project.id, name, target.absolutePath, System.currentTimeMillis())
             saveReleases(releases() + release)
-            return release
+            SmartVault(context).exportIfConfigured(release, project)
+            release
         } catch (error: Exception) {
             target.delete()
             throw error
@@ -523,9 +542,59 @@ class Store(private val context: Context) {
         projectIndex.writeText(array.toString())
     }
 
-    private fun saveReleases(items: List<Release>) {
+    data class DuplicateApks(val files: Int, val bytes: Long)
+
+    private fun duplicateApkPaths(): Map<String, String> {
+        val root = releaseRoot.canonicalFile
+        val files = releases().mapNotNull { r ->
+            runCatching { File(r.path).canonicalFile }.getOrNull()?.takeIf {
+                it.parentFile == root && it.isFile && it.name.endsWith(".apk", true)
+            }
+        }.distinctBy { it.path }
+        val aliases = mutableMapOf<String, String>()
+        for ((_, sameSize) in files.groupBy { it.length() }) {
+            if (sameSize.size < 2) continue
+            val seen = mutableMapOf<String, File>()
+            for (file in sameSize) {
+                val digest = runCatching { SmartStudio.digest(file) }.getOrNull() ?: continue
+                val first = seen[digest]
+                if (first == null) seen[digest] = file else aliases[file.path] = first.path
+            }
+        }
+        return aliases
+    }
+
+    fun duplicateApks(): DuplicateApks = synchronized(releaseLock) {
+        val paths = duplicateApkPaths()
+        DuplicateApks(paths.size, paths.keys.sumOf { File(it).length() })
+    }
+
+    /** Keep all Vault rows/IDs and consolidate byte-identical app-private files only. */
+    fun compactDuplicateApks(): DuplicateApks = synchronized(releaseLock) {
+        val aliases = duplicateApkPaths()
+        if (aliases.isEmpty()) return@synchronized DuplicateApks(0, 0)
+        val before = releases()
+        val after = before.map { r ->
+            aliases[File(r.path).canonicalPath]?.let { r.copy(path = it) } ?: r
+        }
+        saveReleases(after)
+        val referenced = releases().map { File(it.path).canonicalPath }.toSet()
+        require(referenced.isNotEmpty()) { "Cannot confirm saved Vault index" }
+        var count = 0; var bytes = 0L
+        for (path in aliases.keys) {
+            if (path in referenced) continue
+            val file = File(path)
+            val size = file.length()
+            if (file.delete()) { count++; bytes += size }
+        }
+        DuplicateApks(count, bytes)
+    }
+
+    private fun saveReleases(items: List<Release>) = synchronized(releaseLock) {
         val array = JSONArray()
         items.forEach { array.put(JSONObject().put("id", it.id).put("projectId", it.projectId).put("name", it.name).put("path", it.path).put("added", it.added)) }
-        releaseIndex.writeText(array.toString())
+        val temp = File(context.filesDir, "releases.json.pending")
+        temp.writeText(array.toString())
+        require(temp.renameTo(releaseIndex)) { "Could not update APK index" }
     }
 }

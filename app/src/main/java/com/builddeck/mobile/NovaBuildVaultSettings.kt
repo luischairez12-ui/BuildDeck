@@ -232,12 +232,19 @@ internal fun NovaVault(
     onSelectProject: (String) -> Unit,
     onInstall: (Release) -> Unit,
     onImport: (Project) -> Unit,
-    onSaveToDownloads: (Release) -> Unit
+    onSaveToDownloads: (Release) -> Unit,
+    onSaveToFolder: (Release) -> Unit,
+    groupNames: Map<String, String>
 ) {
     val context = LocalContext.current
     var search by remember { mutableStateOf("") }
     var detailsFor by remember { mutableStateOf<Release?>(null) }
-    val visible = releases.filter { it.name.contains(search, ignoreCase = true) }
+    var selectedGroup by remember { mutableStateOf<String?>(null) }
+    val grouped = releases.groupBy { groupNames[it.projectId] ?: "Archived / other" }
+    val visible = releases.filter {
+        (selectedGroup == null || (groupNames[it.projectId] ?: "Archived / other") == selectedGroup) &&
+            (it.name.contains(search, true) || groupNames[it.projectId]?.contains(search, true) == true)
+    }
     LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { NovaHeader("APK Vault", "Your finished APKs, with version and update checks.") }
@@ -252,6 +259,16 @@ internal fun NovaVault(
                 Spacer(Modifier.weight(1f))
                 if (projects.isNotEmpty()) TextButton(onClick = { onImport(projects.first()) }) {
                     Text("+ Import APK", color = NovaBlue)
+                }
+            }
+        }
+        item {
+            NovaSection("Project collections")
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = selectedGroup == null, onClick = { selectedGroup = null }, label = { Text("All") })
+                grouped.entries.sortedBy { it.key.lowercase() }.forEach { entry ->
+                    FilterChip(selected = selectedGroup == entry.key, onClick = { selectedGroup = entry.key },
+                        label = { Text(entry.key + " (" + entry.value.size + ")") })
                 }
             }
         }
@@ -297,7 +314,7 @@ internal fun NovaVault(
                         color = NovaRed, style = MaterialTheme.typography.bodySmall)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(projects.firstOrNull { it.id == release.projectId }?.name ?: "Archived project",
+                    Text(groupNames[release.projectId] ?: "Archived project",
                         modifier = Modifier.weight(1f), maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.labelSmall,
@@ -317,6 +334,9 @@ internal fun NovaVault(
                             else -> "Install"
                         })
                     }
+                }
+                TextButton(onClick = { onSaveToFolder(release) }) {
+                    Text("↓  Save to selected Vault folder", color = NovaBlue)
                 }
                 TextButton(onClick = { onSaveToDownloads(release) }) {
                     Text("↓  Save APK to Downloads", color = NovaBlue)
@@ -367,6 +387,9 @@ internal fun NovaSettings(
     githubAccount: String?,
     darkMode: Boolean,
     onDarkMode: (Boolean) -> Unit,
+    scanFolder: String, destinationFolder: String, autoScan: Boolean,
+    onSmartFolder: (String) -> Unit, onDisconnectSmart: (String) -> Unit,
+    onAutoScan: (Boolean) -> Unit, onScanSmart: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -387,9 +410,35 @@ internal fun NovaSettings(
             }
         }
         item {
-            NovaSection("Build output")
+            NovaSection("Storage manager")
             NovaCard {
                 Text("APK collection folder", fontWeight = FontWeight.SemiBold)
+                NovaHint(scanFolder)
+                OutlinedButton(onClick = { onSmartFolder("scan") }, modifier = Modifier.fillMaxWidth()) { Text("Choose APK scan folder") }
+                if (scanFolder != "Not selected") {
+                    TextButton(onClick = { onDisconnectSmart("scan") }) { Text("Disconnect") }
+                    NovaPrimaryButton("Scan selected folder", onScanSmart)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Scan on app return")
+                        NovaHint("Match APK packages and skip exact duplicates")
+                    }
+                    Switch(checked = autoScan, onCheckedChange = onAutoScan)
+                }
+            }
+            NovaCard {
+                Text("APK Vault destination", fontWeight = FontWeight.SemiBold)
+                NovaHint(destinationFolder)
+                OutlinedButton(onClick = { onSmartFolder("destination") }, modifier = Modifier.fillMaxWidth()) { Text("Choose Vault folder") }
+                if (destinationFolder != "Not selected") TextButton(onClick = { onDisconnectSmart("destination") }) { Text("Disconnect") }
+                NovaHint("New APKs are copied into project subfolders. The private Vault and installer access stay intact.")
+            }
+        }
+        item {
+            NovaSection("Termux output fallback")
+            NovaCard {
+                Text("Verified build handoff folder", fontWeight = FontWeight.SemiBold)
                 NovaHint(if (outputConnected) "Linked • Downloads/BuildDeck/Out"
                     else "Not connected • Select Downloads/BuildDeck/Out")
                 OutlinedButton(onClick = onConnect, modifier = Modifier.fillMaxWidth()) {
@@ -426,7 +475,7 @@ internal fun NovaSettings(
         }
         item {
             NovaCard {
-                Text("BuildDeck v0.4.6 • AI Sync Inbox",
+                Text("BuildDeck v0.4.8 • Smart Studio",
                     fontWeight = FontWeight.Bold)
                 NovaHint("Restored the original blue-layer brand mark and top hero artwork. Nova Studio retains your projects, GitHub connection, APK Vault and local builder.")
                 NovaHint("Remote ChatGPT phone access is not enabled.")
