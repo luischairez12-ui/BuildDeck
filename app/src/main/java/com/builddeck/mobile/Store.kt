@@ -428,7 +428,7 @@ class Store(private val context: Context) {
             val release = Release(id, project.id, name, dest.absolutePath, System.currentTimeMillis())
             saveReleases(releases() + release)
             SmartVault(context).exportIfConfigured(release, project)
-            return release
+            release
         } catch (ex: Exception) {
             dest.delete()
             throw ex
@@ -452,7 +452,7 @@ class Store(private val context: Context) {
             val release = Release(id, project.id, name, target.absolutePath, System.currentTimeMillis())
             saveReleases(releases() + release)
             SmartVault(context).exportIfConfigured(release, project)
-            return release
+            release
         } catch (error: Exception) {
             target.delete()
             throw error
@@ -590,7 +590,7 @@ class Store(private val context: Context) {
         DuplicateApks(count, bytes)
     }
 
-    private fun saveReleases(items: List<Release>) {
+    private fun saveReleases(items: List<Release>) = synchronized(releaseLock) {
         val array = JSONArray()
         items.forEach { array.put(JSONObject().put("id", it.id).put("projectId", it.projectId).put("name", it.name).put("path", it.path).put("added", it.added)) }
         val temp = File(context.filesDir, "releases.json.pending")
