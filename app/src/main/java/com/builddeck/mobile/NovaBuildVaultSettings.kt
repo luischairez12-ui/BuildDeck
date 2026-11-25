@@ -233,12 +233,18 @@ internal fun NovaVault(
     onInstall: (Release) -> Unit,
     onImport: (Project) -> Unit,
     onSaveToDownloads: (Release) -> Unit,
-    onSaveToFolder: (Release) -> Unit
+    onSaveToFolder: (Release) -> Unit,
+    groupNames: Map<String, String>
 ) {
     val context = LocalContext.current
     var search by remember { mutableStateOf("") }
     var detailsFor by remember { mutableStateOf<Release?>(null) }
-    val visible = releases.filter { it.name.contains(search, ignoreCase = true) }
+    var selectedGroup by remember { mutableStateOf<String?>(null) }
+    val grouped = releases.groupBy { groupNames[it.projectId] ?: "Archived / other" }
+    val visible = releases.filter {
+        (selectedGroup == null || (groupNames[it.projectId] ?: "Archived / other") == selectedGroup) &&
+            (it.name.contains(search, true) || groupNames[it.projectId]?.contains(search, true) == true)
+    }
     LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { NovaHeader("APK Vault", "Your finished APKs, with version and update checks.") }
@@ -253,6 +259,16 @@ internal fun NovaVault(
                 Spacer(Modifier.weight(1f))
                 if (projects.isNotEmpty()) TextButton(onClick = { onImport(projects.first()) }) {
                     Text("+ Import APK", color = NovaBlue)
+                }
+            }
+        }
+        item {
+            NovaSection("Project collections")
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = selectedGroup == null, onClick = { selectedGroup = null }, label = { Text("All") })
+                grouped.entries.sortedBy { it.key.lowercase() }.forEach { entry ->
+                    FilterChip(selected = selectedGroup == entry.key, onClick = { selectedGroup = entry.key },
+                        label = { Text(entry.key + " (" + entry.value.size + ")") })
                 }
             }
         }
@@ -298,7 +314,7 @@ internal fun NovaVault(
                         color = NovaRed, style = MaterialTheme.typography.bodySmall)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(projects.firstOrNull { it.id == release.projectId }?.name ?: "Archived project",
+                    Text(groupNames[release.projectId] ?: "Archived project",
                         modifier = Modifier.weight(1f), maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.labelSmall,
