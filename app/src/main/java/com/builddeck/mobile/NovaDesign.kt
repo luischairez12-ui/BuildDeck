@@ -486,7 +486,7 @@ internal fun NovaDashboard(
                 }
                 BuildPulseCard(
                     record = latest,
-                    stage = BuildTransferProvider.stage(context, latest.id) ?: latest.note,
+                    stage = BuildTransferProvider.stage(context, latest.id) ?: latest.note.takeIf { latest.status == "RUNNING" },
                     onViewLog = { onViewLog(latest) },
                     onImportApk = if (currentProject != null) { { onImportApk(currentProject) } } else null,
                     onOpenVault = onVault,
