@@ -39,7 +39,6 @@ control="$HOME/builddeck/tasks/$record_id"
 mkdir -p "$HOME/builddeck/tasks" "$HOME/builddeck/locks"
 mkdir "$control" || exit 10
 printf "%s\n" "$project_id" > "$control/project"
-printf "%s\n" "$" > "$control/pid"
 state() { printf "%s\n" "$1" > "$control/state.tmp"; mv -f "$control/state.tmp" "$control/state"; }
 state STARTING
 # flock is optional on minimal Termux installations; normal builds still work.
@@ -94,6 +93,9 @@ echo "BuildDeck local build pipeline v5.1"
 if command -v flock >/dev/null 2>&1; then
   exec 8>"$HOME/builddeck/locks/$project_id.lock"
   flock -n 8 || { echo "Another managed build owns this project workspace"; exit 10; }
+else
+  # Isolate new jobs if the device lacks flock; never overwrite another workspace.
+  workspace="$HOME/builddeck/work/${project_id}_${record_id}"
 fi
 state PREPARING
 check_cancel

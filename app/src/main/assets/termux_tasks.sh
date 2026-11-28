@@ -5,6 +5,15 @@ root="$HOME/builddeck/tasks"
 action="${1:-list}"
 id="${2:-}"
 if [[ "$action" != list && "$action" != cancel && "$action" != clean ]]; then exit 2; fi
+nonce="${3:-}"
+uri="${4:-}"
+[[ "$nonce" =~ ^[a-f0-9-]{36}$ ]] || exit 2
+mkdir -p "$root" || exit 3
+report="$(mktemp "$root/.snapshot.XXXXXXXX")" || exit 3
+trap 'rm -f -- "$report"' EXIT
+exec 3>&1
+exec > "$report"
+
 if [[ "$action" == cancel ]]; then
   [[ "$id" =~ ^[a-f0-9-]{36}$ ]] || exit 2
   dir="$root/$id"
@@ -42,3 +51,8 @@ for dir in "$root"/*; do
   printf 'JOB|%s|%s|%s|%s\n' "$key" "$phase" "$live" "$project"
 done
 echo "NOTICE|Only BuildDeck-managed jobs created by v0.5.1+ are shown."
+printf "END|%s\n" "$nonce"
+if [[ "$uri" == content://com.builddeck.mobile.handoff/task/* ]] && command -v timeout >/dev/null 2>&1; then
+  timeout -k 2s 12s /system/bin/content write --uri "$uri" < "$report" >/dev/null 2>&1 || true
+fi
+cat "$report" >&3

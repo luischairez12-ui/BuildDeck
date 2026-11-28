@@ -28,6 +28,7 @@ class BuildTransferProvider : ContentProvider() {
         if (mode !in setOf("w", "wt")) throw FileNotFoundException("Write-only build handoff")
         val app = context ?: throw FileNotFoundException("No BuildDeck context")
         val parts = uri.pathSegments
+        if (parts.size == 3 && parts[0] == "task") return TermuxTaskBridge.openSnapshot(app, parts[1], parts[2])
         if (parts.size != 4 || parts[0] != "v1") throw FileNotFoundException("Invalid path")
         val id = parts[1]
         val secret = parts[2]

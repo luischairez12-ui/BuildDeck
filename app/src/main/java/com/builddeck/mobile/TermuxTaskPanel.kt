@@ -19,13 +19,14 @@ internal fun TermuxTaskPanel(projects: List<Project>, records: List<BuildRecord>
     var cancelFor by remember { mutableStateOf<ManagedTermuxJob?>(null) }
     var showLegacy by remember { mutableStateOf(false) }
     LaunchedEffect(prefs) { while (true) { tick = System.currentTimeMillis(); delay(1000) } }
-    val snapshot = prefs.getString("snapshot", "").orEmpty()
+    val privateReport = remember(tick) { TermuxTaskBridge.privateSnapshot(context) }
+    val snapshot = privateReport?.first ?: prefs.getString("snapshot", "").orEmpty()
     val sent = prefs.getLong("sent", 0)
-    val received = prefs.getLong("received", 0)
+    val received = maxOf(privateReport?.second ?: 0L, prefs.getLong("received", 0))
     val waiting = sent > received && tick - sent < 25000
     val jobs = remember(snapshot) { managedJobs(snapshot) }
     val active = jobs.count { it.process == "ACTIVE" }
-    val error = prefs.getString("error", "").orEmpty()
+    val error = if (privateReport != null) "" else prefs.getString("error", "").orEmpty()
     fun request(action: String, id: String = "") {
         localError = ""
         try { TermuxTaskBridge.request(context, action, id) } catch (e: Exception) {
@@ -33,9 +34,10 @@ internal fun TermuxTaskPanel(projects: List<Project>, records: List<BuildRecord>
         }
         tick = System.currentTimeMillis()
     }
+    LaunchedEffect(Unit) { if (!waiting) request("list") }
     NovaSection("Termux task manager")
     NovaCard {
-        Text("$active confirmed active • " + jobs.size + " tracked", fontWeight = FontWeight.Bold)
+        Text(if (received == 0L) "Task status not checked" else "$active active at last check • " + jobs.size + " tracked", fontWeight = FontWeight.Bold)
         NovaHint(if (received == 0L) "Tap Refresh to query Termux." else "Last response: " + novaDate(received))
         if (waiting) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (sent > received && !waiting) NovaHint("No response from Termux. Existing snapshot may be stale. Open Termux and retry.")
