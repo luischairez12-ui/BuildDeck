@@ -229,6 +229,7 @@ internal fun NovaVault(
     onSelectProject: (String) -> Unit,
     onInstall: (Release) -> Unit,
     onShare: (Release) -> Unit,
+    onRecover: () -> Unit,
     onImport: (Project) -> Unit,
     onSaveToDownloads: (Release) -> Unit
 ) {
@@ -239,6 +240,10 @@ internal fun NovaVault(
     LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { NovaHeader("APK Vault", "Your finished APKs, with version and update checks.") }
+        item {
+            OutlinedButton(onClick = onRecover, modifier = Modifier.fillMaxWidth()) { Text("Recover APKs from Downloads") }
+            NovaHint("Only matched, verified BuildDeck outputs are collected automatically. Original files stay in Downloads.")
+        }
         item {
             OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(),
                 singleLine = true, placeholder = { Text("⌕  Search APKs") },

@@ -151,15 +151,16 @@ internal fun BuildPulseCard(
             }
             if (!compact) {
                 // A stage turning green means it finished, not merely started.
+                val actualStage = stage ?: record.note.takeIf { record.status == "RUNNING" }
                 val currentStage = when {
                     imported || compiled -> 4
-                    stage?.contains("Package complete", true) == true -> 4
-                    stage?.contains("APK ready", true) == true -> 4
-                    stage?.contains("Complete", true) == true -> 4
-                    stage?.contains("Packaging", true) == true -> 3
-                    stage?.contains("Compiling", true) == true -> 2
-                    stage?.contains("Extracting", true) == true -> 1
-                    stage?.contains("Preparing", true) == true -> 0
+                    actualStage?.contains("Package complete", true) == true -> 4
+                    actualStage?.contains("APK ready", true) == true -> 4
+                    actualStage?.contains("Complete", true) == true -> 4
+                    actualStage?.contains("Packaging", true) == true -> 3
+                    actualStage?.contains("Compiling", true) == true -> 2
+                    actualStage?.contains("Extracting", true) == true -> 1
+                    actualStage?.contains("Preparing", true) == true -> 0
                     else -> -1
                 }
                 val completedThrough = if (imported) 4 else currentStage - 1

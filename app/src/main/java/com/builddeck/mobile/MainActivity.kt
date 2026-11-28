@@ -272,7 +272,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         while (true) {
             delay(30000)
             val owner = context as? ComponentActivity
-            if (owner == null || owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            if (!busy && (owner == null || owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))) {
                 recoverDownloads(false)
             }
         }
@@ -736,6 +736,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         onSelectProject = { selectedId = it },
                         onInstall = ::installRelease,
                         onShare = ::shareRelease,
+                        onRecover = { recoverDownloads(true) },
                         onImport = { project ->
                             importApkFor = project
                             apkPicker.launch(arrayOf("application/vnd.android.package-archive",
