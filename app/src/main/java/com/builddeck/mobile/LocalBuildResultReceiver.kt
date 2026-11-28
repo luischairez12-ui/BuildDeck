@@ -95,7 +95,7 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
                         "SUCCESS_NEEDS_IMPORT" -> if (apk.length() > 100L && !validDigest)
                             "Compiled; direct transfer did not pass integrity check. Import from Downloads/BuildDeck/Out."
                             else "Compiled; automatic transfer unavailable. Import APK from Downloads/BuildDeck/Out."
-                        else -> (message.ifBlank { errors.takeLast(150).ifBlank { output.takeLast(150) } })
+                        else -> if (completeOutput.contains("BUILDDECK_CANCELLED=YES")) "Cancelled by user" else (message.ifBlank { errors.takeLast(150).ifBlank { output.takeLast(150) } })
                             .ifBlank { "Termux build failed with exit code $exit" }
                     }
                     ai.completeLocalBuild(recordId, status, note, console)

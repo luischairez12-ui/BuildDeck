@@ -28,8 +28,8 @@ export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export PATH="$JAVA_HOME/bin:$PREFIX/bin:/system/bin:/system/xbin:$PATH"
 inbox="$HOME/storage/downloads/BuildDeck/Inbox/$zip_name"
 out="$HOME/storage/downloads/BuildDeck/Out/$project_id"
-workspace="$HOME/builddeck/work/$project_id"
-mkdir -p "$out" "$HOME/builddeck/work"
+workspace="$HOME/builddeck/managed_work/$project_id"
+mkdir -p "$out" "$HOME/builddeck/managed_work"
 log="$out/${record_id:-build_$(date +%Y%m%d_%H%M%S)}.log"
 # Use a durable log rather than a tee process holding the Termux callback pipe.
 exec 3>&1
@@ -95,7 +95,7 @@ if command -v flock >/dev/null 2>&1; then
   flock -n 8 || { echo "Another managed build owns this project workspace"; exit 10; }
 else
   # Isolate new jobs if the device lacks flock; never overwrite another workspace.
-  workspace="$HOME/builddeck/work/${project_id}_${record_id}"
+  workspace="$HOME/builddeck/managed_work/${project_id}_${record_id}"
 fi
 state PREPARING
 check_cancel

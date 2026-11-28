@@ -43,6 +43,7 @@ jobs:
         run: |
           bash -n app/src/main/assets/termux_builder.sh
           bash -n app/src/main/assets/termux_tasks.sh
+          bash tools/test_termux_tasks.sh
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug --stacktrace
       - name: Upload debug APK

@@ -165,7 +165,7 @@ class OutputCollector(private val context: Context) {
                     changed = true
                 }
             } else if (marker == "FAILED" && record.status in setOf("SUBMITTED", "RUNNING")) {
-                ai.completeLocalBuild(record.id, "FAILED", "Build failed — check the log", console)
+                ai.completeLocalBuild(record.id, "FAILED", if (console.contains("BUILDDECK_CANCELLED=YES")) "Cancelled by user" else "Build failed — check the log", console)
                 changed = true
             } else if (record.status in setOf("SUBMITTED", "RUNNING")) {
                 val stage = BuildTransferProvider.stage(context, record.id)
@@ -256,7 +256,7 @@ class OutputCollector(private val context: Context) {
                     }
                 }
             } else if (result == "FAILED" && record.status != "FAILED") {
-                ai.completeLocalBuild(record.id, "FAILED", "Build failed — check the log", logText.orEmpty())
+                ai.completeLocalBuild(record.id, "FAILED", if (logText.orEmpty().contains("BUILDDECK_CANCELLED=YES")) "Cancelled by user" else "Build failed — check the log", logText.orEmpty())
                 changed = true
             } else if (result == "SUCCESS" && record.status != "SUCCESS_NEEDS_IMPORT") {
                 ai.completeLocalBuild(record.id, "SUCCESS_NEEDS_IMPORT", "Compiled; use manual APK import", logText.orEmpty())
