@@ -232,7 +232,7 @@ internal fun NovaBottomBar(section: String, onTab: (String) -> Unit) {
                         color = if (tab == section) NovaBlue else MaterialTheme.colorScheme.onSurfaceVariant)
                 },
                 label = {
-                    Text(if (tab == "Dashboard") "Home" else tab,
+                    Text(when (tab) { "Dashboard" -> "Home"; "Projects" -> "Library"; "Settings" -> "Tools"; else -> tab },
                         style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 },
                 colors = NavigationBarItemDefaults.colors(
@@ -382,82 +382,169 @@ internal fun NovaHero() {
     }
 }
 
+/** Conservative presentation-only grouping. Never changes an ID or source. */
+internal fun studioFamily(name: String): String {
+    val clean = name.trim().replace(Regex("""(?i)\s*\(\d+\)$"""), "")
+        .replace(Regex("""(?i)[ _-]+(?:source|debug|release|apk|zip)$"""), "")
+    val version = Regex("""(?i)[ _-]+v?\d+\.\d+(?:\.\d+)*(?=$|[ _-])""").find(clean)
+    val hash = Regex("""(?i)[ _-]+[0-9a-f]{8,40}(?=$|[ _-])""").find(clean)
+    val cut = listOfNotNull(version?.range?.first, hash?.range?.first).minOrNull()
+    val base = if (cut == null) clean else clean.substring(0, cut)
+    return base.trim(' ', '-', '_').replace(Regex("""[ _-]+"""), " ").ifBlank { name }
+}
+
+internal fun studioGroups(projects: List<Project>): List<List<Project>> =
+    projects.groupBy { studioFamily(it.name).lowercase(Locale.ROOT) }
+        .values.map { it.sortedByDescending { p -> p.created } }
+        .sortedByDescending { it.first().created }
+
+@Composable
+internal fun StudioProjectPicker(projects: List<Project>, onDismiss: () -> Unit, onSelect: (Project) -> Unit) {
+    var search by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf<String?>(null) }
+    val visible = remember(projects, search) {
+        studioGroups(projects).filter { group -> group.any { it.name.contains(search, true) } ||
+            studioFamily(group.first().name).contains(search, true) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Choose project / version") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth(),
+                    singleLine = true, label = { Text("Search library") })
+                NovaHint("Newest imports first • " + projects.size + " source records")
+                LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items(visible, key = { it.first().id }) { group ->
+                        val key = studioFamily(group.first().name).lowercase(Locale.ROOT)
+                        val open = expanded == key || search.isNotBlank()
+                        Column {
+                            TextButton(onClick = {
+                                if (group.size == 1) onSelect(group.first())
+                                else expanded = if (expanded == key) null else key
+                            }, modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(studioFamily(group.first().name), fontWeight = FontWeight.Bold)
+                                    NovaHint(group.size.toString() + " source version(s)")
+                                }
+                                Text(if (open && group.size > 1) "−" else "›")
+                            }
+                            if (open && group.size > 1) group.forEach { project ->
+                                TextButton(onClick = { onSelect(project) }, modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.fillMaxWidth().padding(start = 12.dp)) {
+                                        Text(project.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        NovaHint(novaDate(project.created))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (visible.isEmpty()) item { NovaHint("No matching source projects.") }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
 @Composable
 internal fun NovaDashboard(
     projects: List<Project>, releases: List<Release>,
     builds: List<BuildRecord>, activeLink: RepoLink?,
     inboxItems: List<AiSyncInboxEntry>, inboxChecking: Boolean,
     inboxLastCheckedAt: Long, linkedProjectCount: Int,
+    selectedProject: Project?,
+    onChoose: (Project) -> Unit, onProject: (Project) -> Unit, onBuild: (Project) -> Unit,
     onInboxRefresh: () -> Unit, onInboxReview: (String) -> Unit,
-    onProject: (Project) -> Unit, onBuild: (Project) -> Unit,
     onProjects: () -> Unit, onBuilds: () -> Unit, onVault: () -> Unit,
-    onGitHub: () -> Unit, onImport: () -> Unit
+    onGitHub: () -> Unit, onImport: () -> Unit,
+    onRecover: () -> Unit, onViewLog: (BuildRecord) -> Unit, onImportApk: (Project) -> Unit
 ) {
-    val active = projects.firstOrNull()
-    val latest = builds.firstOrNull()
+    val active = selectedProject ?: projects.firstOrNull()
+    val running = builds.filter { it.status in setOf("SUBMITTED", "RUNNING") }
+    val latest = running.firstOrNull() ?: builds.firstOrNull()
+    val currentProject = latest?.let { record -> projects.firstOrNull { it.id == record.projectId } }
     val context = LocalContext.current
-    LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { NovaHero() }
+    val families = remember(projects) { studioGroups(projects) }
+    var choosing by remember { mutableStateOf(false) }
+    if (choosing) StudioProjectPicker(projects, { choosing = false }) {
+        onChoose(it); choosing = false
+    }
+    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            if (active != null) NovaBanner(active, activeLink) { onProject(active) }
-            else NovaCard {
-                Text("Start a new project", fontWeight = FontWeight.Bold)
-                NovaHint("Import a complete Android Gradle source project.")
-                NovaPrimaryButton("+ Import project", onImport)
+            NovaPrimaryButton("+  Import source project ZIP", onImport)
+        }
+        item {
+            NovaSection(if (running.isNotEmpty()) "Live build" else "Build monitor", "All builds", onBuilds)
+            Spacer(Modifier.height(4.dp))
+            if (latest != null) {
+                currentProject?.let {
+                    Text(it.name, style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold, maxLines = 2)
+                    Spacer(Modifier.height(5.dp))
+                }
+                BuildPulseCard(
+                    record = latest,
+                    stage = BuildTransferProvider.stage(context, latest.id) ?: latest.note,
+                    onViewLog = { onViewLog(latest) },
+                    onImportApk = if (currentProject != null) { { onImportApk(currentProject) } } else null,
+                    onOpenVault = onVault,
+                    compact = false
+                )
+            } else NovaCard { NovaHint("No active builds. Choose a project below to begin.") }
+            if (running.size > 1) NovaHint(running.size.toString() + " requests awaiting completion")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onRecover, modifier = Modifier.weight(1f)) { Text("Recover APK") }
+                OutlinedButton(onClick = onVault, modifier = Modifier.weight(1f)) { Text("Open Vault") }
             }
         }
         item {
-            NovaAiSyncInbox(
-                entries = inboxItems,
-                linkedProjects = linkedProjectCount,
-                scanning = inboxChecking,
-                checkedAt = inboxLastCheckedAt,
-                onRefresh = onInboxRefresh,
-                onReview = onInboxReview,
-                onLinkProject = onProjects
-            )
-        }
-        item { NovaPrimaryButton("ϟ   Build APK on this phone",
-            onClick = { if (active != null) onBuild(active) },
-            enabled = active != null) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                NovaTile("▣", "Projects", "Manage source", Modifier.weight(1f), onProjects)
-                NovaTile("⇅", "GitHub", if (activeLink != null) "Check updates" else "Connect source", Modifier.weight(1f), onGitHub)
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                NovaTile("◈", "APK Vault", releases.size.toString() + " saved",
-                    Modifier.weight(1f), onVault)
-                NovaTile("ϟ", "Builds", "Build history", Modifier.weight(1f), onBuilds)
-            }
-        }
-        item { NovaSection("Recent activity", "View builds", onBuilds) }
-        if (latest == null) item {
-            NovaCard { NovaHint("No builds yet. Tap Build APK to start.") }
-        } else item {
-            BuildPulseCard(
-                record = latest,
-                stage = BuildTransferProvider.stage(context, latest.id),
-                onViewLog = null,
-                onImportApk = null,
-                compact = true
-            )
-        }
-        if (releases.isNotEmpty()) item {
             NovaCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Latest APK", fontWeight = FontWeight.SemiBold)
-                        NovaHint(releases.first().name)
-                    }
-                    TextButton(onClick = onVault) { Text("Open Vault ›", color = NovaBlue) }
+                NovaHint("SELECTED PROJECT")
+                if (active != null) {
+                    Text(active.name, style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    NovaHint(studioFamily(active.name) + " • " + novaDate(active.created))
+                    val latestApk = releases.firstOrNull { it.projectId == active.id }
+                    val lastBuild = builds.firstOrNull { it.projectId == active.id }
+                    if (latestApk != null) NovaHint("APK: " + latestApk.name)
+                    if (lastBuild != null) NovaHint("Last build: " + lastBuild.status.replace('_', ' '))
+                } else NovaHint("Import an Android Gradle project to begin.")
+                OutlinedButton(onClick = { choosing = true }, enabled = projects.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth()) { Text("Choose project / version") }
+                NovaPrimaryButton("ϟ   Start build", { active?.let(onBuild) }, enabled = active != null)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { active?.let(onProject) }, enabled = active != null) { Text("Open project") }
+                    TextButton(onClick = { active?.let(onImportApk) }, enabled = active != null) { Text("Import APK") }
                 }
             }
         }
-        item { NovaHint("Source updates and local builds still require your approval.") }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NovaTile("▣", "Library", projects.size.toString() + " sources", Modifier.weight(1f), onProjects)
+                NovaTile("≡", "Families", families.size.toString() + " groups", Modifier.weight(1f), onProjects)
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NovaTile("ϟ", "Builds", running.size.toString() + " active", Modifier.weight(1f), onBuilds)
+                NovaTile("◈", "Vault", releases.size.toString() + " APKs", Modifier.weight(1f), onVault)
+            }
+        }
+        item { NovaSection("Recent activity", "History", onBuilds) }
+        items(builds.take(5), key = { it.id }) { record ->
+            NovaCard(Modifier.fillMaxWidth().clickable { onViewLog(record) }) {
+                Text(projects.firstOrNull { it.id == record.projectId }?.name ?: "Archived project",
+                    fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                NovaHint(record.status.replace('_', ' ') + " • " + novaDate(record.submittedAt))
+            }
+        }
+        item {
+            NovaAiSyncInbox(entries = inboxItems, linkedProjects = linkedProjectCount,
+                scanning = inboxChecking, checkedAt = inboxLastCheckedAt,
+                onRefresh = onInboxRefresh, onReview = onInboxReview, onLinkProject = onProjects)
+        }
     }
 }
 
@@ -471,71 +558,80 @@ internal fun NovaProjects(
 ) {
     var search by remember { mutableStateOf("") }
     var showGitHub by remember { mutableStateOf(false) }
-    val visible = projects.filter { it.name.contains(search, ignoreCase = true) }
-    LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { NovaHeader("Projects", "One clean workspace for every Android app.") }
+    var grouped by remember { mutableStateOf(true) }
+    var expanded by remember { mutableStateOf(setOf<String>()) }
+    val groups = remember(projects) { studioGroups(projects) }
+    val visible = remember(projects, search) { projects.filter { it.name.contains(search, true) } }
+    val shownGroups = remember(groups, search) { groups.filter { group ->
+        group.any { it.name.contains(search, true) } || studioFamily(group.first().name).contains(search, true)
+    } }
+    LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { NovaHeader("Project library", projects.size.toString() + " sources • " + groups.size + " suggested families") }
+        item { NovaPrimaryButton("+ Import source project ZIP", onImportZip) }
         item {
             OutlinedTextField(search, { search = it }, modifier = Modifier.fillMaxWidth(),
-                singleLine = true, placeholder = { Text("⌕  Search projects") },
+                singleLine = true, placeholder = { Text("Search apps or versions") },
                 shape = RoundedCornerShape(16.dp))
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                NovaCard(Modifier.weight(1f)) {
-                    NovaHint("ACTIVE PROJECTS")
-                    Text(projects.size.toString(), color = NovaBlue,
-                        style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                }
-                NovaCard(Modifier.weight(1f)) {
-                    NovaHint("ARCHIVED")
-                    Text(archivedCount.toString(), color = NovaBlue,
-                        style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = grouped, onClick = { grouped = true }, label = { Text("Families") })
+                FilterChip(selected = !grouped, onClick = { grouped = false }, label = { Text("All sources") })
+                if (archivedCount > 0) TextButton(onClick = onRestore) { Text("Archive ($archivedCount)") }
             }
+            NovaHint("Grouping is by source name only. No versions are moved or deleted.")
         }
-        item { NovaSection("Your workspaces") }
-        if (visible.isEmpty()) item {
-            NovaCard { NovaHint(if (projects.isEmpty()) "No projects yet. Import source to begin."
-                else "No projects match your search.") }
-        }
-        items(visible, key = { it.id }) { project ->
-            NovaCard(Modifier.fillMaxWidth().clickable { onSelect(project) }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    NovaLogo(size = 34.dp)
-                    Spacer(Modifier.width(13.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(project.name, fontWeight = FontWeight.Bold)
-                        NovaHint("Android project • " + novaDate(project.created))
+        if (visible.isEmpty() && shownGroups.isEmpty()) item { NovaHint("No projects match your search.") }
+        if (grouped) {
+            items(shownGroups, key = { studioFamily(it.first().name).lowercase(Locale.ROOT) }) { family ->
+                val title = studioFamily(family.first().name)
+                val key = title.lowercase(Locale.ROOT)
+                val open = key in expanded || search.isNotBlank()
+                NovaCard {
+                    Row(Modifier.fillMaxWidth().clickable {
+                        if (family.size == 1) onSelect(family.first())
+                        else expanded = if (key in expanded) expanded - key else expanded + key
+                    }, verticalAlignment = Alignment.CenterVertically) {
+                        NovaLogo(size = 33.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(title, fontWeight = FontWeight.Bold)
+                            NovaHint(family.size.toString() + " sources • " + novaDate(family.first().created))
+                        }
+                        Text(if (open && family.size > 1) "−" else "›", color = NovaBlue, fontSize = 23.sp)
                     }
-                    Text("›", color = NovaBlue, fontSize = 24.sp)
+                    if (family.size > 1) {
+                        TextButton(onClick = { onSelect(family.first()) }) { Text("Open newest import") }
+                        if (open) family.forEach { project ->
+                            HorizontalDivider()
+                            Row(Modifier.fillMaxWidth().clickable { onSelect(project) }.padding(vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(project.name, fontWeight = FontWeight.Medium, maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis)
+                                    NovaHint(novaDate(project.created))
+                                }
+                                Text("›", color = NovaBlue)
+                            }
+                        }
+                    }
                 }
             }
-        }
-        item { NovaPrimaryButton("+ Import source project ZIP", onImportZip) }
-        if (projects.size > 1) item {
-            OutlinedButton(onClick = onCleanup, modifier = Modifier.fillMaxWidth()) {
-                Text("Clean up duplicates • Keep one", color = NovaBlue)
-            }
-        }
-        if (archivedCount > 0) item {
-            TextButton(onClick = onRestore) {
-                Text("Archived projects (" + archivedCount + ") • Restore", color = NovaBlue)
+        } else items(visible, key = { it.id }) { project ->
+            NovaCard(Modifier.fillMaxWidth().clickable { onSelect(project) }) {
+                Text(project.name, fontWeight = FontWeight.Bold)
+                NovaHint(novaDate(project.created))
             }
         }
         item {
-            NovaSection("GitHub workspace")
-            NovaHint("Import repository source, review changes, or connect your GitHub token.")
-            OutlinedButton(onClick = { showGitHub = !showGitHub },
-                modifier = Modifier.fillMaxWidth()) {
-                Text(if (showGitHub) "Hide GitHub tools" else "Open GitHub tools", color = NovaBlue)
+            NovaSection("Library tools")
+            if (archivedCount > 0) TextButton(onClick = onRestore) { Text("Restore archived sources ($archivedCount)") }
+            // The legacy keep-one action archives every other project; avoid exposing it as duplicate cleanup.
+            OutlinedButton(onClick = { showGitHub = !showGitHub }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (showGitHub) "Hide GitHub tools" else "GitHub tools")
             }
-            if (showGitHub) {
-                Spacer(Modifier.height(8.dp))
-                GitHubImportCard(githubAccount, working,
-                    onGitHubConnect, onGitHubDisconnect, onGitHubImport)
-            }
+            if (showGitHub) GitHubImportCard(githubAccount, working,
+                onGitHubConnect, onGitHubDisconnect, onGitHubImport)
+            NovaHint(releasesCount.toString() + " saved APKs are retained in Vault.")
         }
-        item { NovaHint(releasesCount.toString() + " saved APKs stay in the separate Vault.") }
     }
 }

@@ -35,6 +35,10 @@ internal fun NovaBuildConsole(
     val context = LocalContext.current
     var selectedId by remember(projects) { mutableStateOf(projects.firstOrNull()?.id) }
     var statusFilter by remember { mutableStateOf("All") }
+    var choosingProject by remember { mutableStateOf(false) }
+    if (choosingProject) StudioProjectPicker(projects, { choosingProject = false }) {
+        selectedId = it.id; statusFilter = "All"; choosingProject = false
+    }
     var recordToClear by remember { mutableStateOf<BuildRecord?>(null) }
     var confirmBulkClear by remember { mutableStateOf(false) }
     val selected = projects.firstOrNull { it.id == selectedId } ?: projects.firstOrNull()
@@ -66,20 +70,13 @@ internal fun NovaBuildConsole(
                 else {
                     Text(selected.name, style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold)
-                    if (projects.size > 1) {
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                            projects.forEach { project ->
-                                FilterChip(selected = selected.id == project.id,
-                                    onClick = { selectedId = project.id; statusFilter = "All" },
-                                    label = { Text(project.name, maxLines = 1) })
-                                Spacer(Modifier.width(5.dp))
-                            }
-                        }
+                    OutlinedButton(onClick = { choosingProject = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Choose project / version")
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     NovaStatus("Termux • Debug APK", true)
-                    NovaStatus("Gradle 8.9", true)
+                    NovaStatus("Project Gradle", true)
                 }
                 NovaPrimaryButton("ϟ   Start build",
                     onClick = { if (selected != null) onBuild(selected) },

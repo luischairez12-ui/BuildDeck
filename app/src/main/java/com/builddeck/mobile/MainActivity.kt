@@ -92,6 +92,12 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
     var archiveRestoreOpen by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf("Dashboard") }
     var selectedId by remember { mutableStateOf<String?>(null) }
+    val studioPrefs = remember(context) { context.getSharedPreferences("nova_studio", Context.MODE_PRIVATE) }
+    var homeProjectId by remember { mutableStateOf(studioPrefs.getString("home_project", null)) }
+    fun selectHomeProject(project: Project) {
+        homeProjectId = project.id
+        studioPrefs.edit().putString("home_project", project.id).apply()
+    }
     var editorPath by remember { mutableStateOf<String?>(null) }
     var editorText by remember { mutableStateOf("") }
     var pendingBuild by remember { mutableStateOf<Project?>(null) }
@@ -294,8 +300,8 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
             busy = true
             try {
                 val project = withContext(Dispatchers.IO) { store.importProject(uri) }
-                reload(); section = "Projects"; selectedId = project.id
-                notify("Imported ${project.name}")
+                reload(); selectHomeProject(project); section = "Dashboard"; selectedId = null
+                notify("Imported ${project.name} • ready to build")
             } catch (ex: Exception) { notify("Import failed: ${ex.message}") }
             finally { busy = false }
         }
@@ -563,7 +569,9 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         projects = projects,
                         releases = releases,
                         builds = run { buildRevision; aiControl.buildRecords() },
-                        activeLink = projects.firstOrNull()?.let { githubWorkspace.link(it) },
+                        activeLink = (projects.firstOrNull { it.id == homeProjectId } ?: projects.firstOrNull())?.let { githubWorkspace.link(it) },
+                        selectedProject = projects.firstOrNull { it.id == homeProjectId },
+                        onChoose = { selectHomeProject(it) },
                         inboxItems = inboxItems,
                         inboxChecking = inboxChecking,
                         inboxLastCheckedAt = inboxLastCheckedAt,
@@ -575,14 +583,32 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         onInboxReview = { id ->
                             projects.firstOrNull { it.id == id }?.let { checkGithubUpdates(it) }
                         },
-                        onProject = { selectedId = it.id },
-                        onBuild = { buildConfirm = it },
+                        onProject = { selectHomeProject(it); selectedId = it.id },
+                        onBuild = { selectHomeProject(it); buildConfirm = it },
                         onProjects = { section = "Projects" },
                         onBuilds = { section = "Builds" },
                         onVault = { section = "Vault" },
                         onGitHub = { projects.firstOrNull()?.let { checkGithubUpdates(it) }
                             ?: run { section = "Projects" } },
-                        onImport = { zipPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }
+                        onImport = { zipPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                        onRecover = {
+                            scope.launch {
+                                busy = true
+                                try {
+                                    val changed = withContext(Dispatchers.IO) { outputCollector.reconcile(store, aiControl) }
+                                    buildRevision++; reload()
+                                    notify(if (changed) "Build recovery updated results" else "No new verified result found. Check Termux or connect Out in Tools.")
+                                } catch (error: Exception) { notify("Recovery failed: ${error.message}") }
+                                finally { busy = false }
+                            }
+                        },
+                        onViewLog = { record ->
+                            try { visibleLog = aiControl.buildLog(record) } catch (error: Exception) { notify("Cannot read log: ${error.message}") }
+                        },
+                        onImportApk = { project ->
+                            importApkFor = project
+                            apkPicker.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*"))
+                        }
                     )
                     section == "Projects" -> NovaProjects(projects, releases.size,
                         archivedCount = archivedProjects.size,
@@ -618,7 +644,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                             }
                         },
                         onImportZip = { zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*")) },
-                        onSelect = { selectedId = it.id }
+                        onSelect = { selectHomeProject(it); selectedId = it.id }
                     )
                     section == "Builds" -> NovaBuildConsole(
                         projects = projects,
