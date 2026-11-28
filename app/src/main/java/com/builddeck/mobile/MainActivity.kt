@@ -209,9 +209,9 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         }
     }
 
-    // While a project is open, read granted build logs for live stages and APKs.
-    LaunchedEffect(selectedId, outputConnected) {
-        if (selectedId != null && outputConnected) {
+    // Reconcile granted logs and APKs on every screen, including Dashboard.
+    LaunchedEffect(outputConnected) {
+        if (outputConnected) {
             while (true) {
                 val updated = withContext(Dispatchers.IO) {
                     runCatching { outputCollector.reconcile(store, aiControl) }.getOrDefault(false)

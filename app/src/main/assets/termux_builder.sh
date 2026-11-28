@@ -31,44 +31,50 @@ out="$HOME/storage/downloads/BuildDeck/Out/$project_id"
 workspace="$HOME/builddeck/work/$project_id"
 mkdir -p "$out" "$HOME/builddeck/work"
 log="$out/${record_id:-build_$(date +%Y%m%d_%H%M%S)}.log"
-exec > >(tee -a "$log") 2>&1
+# Use a durable log rather than a tee process holding the Termux callback pipe.
+exec 3>&1
+exec >> "$log" 2>&1
+handoff_write() {
+  local uri="$1" limit="$2"
+  timeout -k 3s "$limit" /system/bin/content write --uri "$uri"
+}
 report_stage() {
   local description="$1"
   echo "BUILDDECK_STAGE=$description"
   # Actual stage events, no simulated percent complete.
   if [[ "$stage_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
-    printf "%s\n" "$description" | /system/bin/content write --uri "$stage_uri" >/dev/null 2>&1 || true
+    printf "%s\n" "$description" | handoff_write "$stage_uri" 12s >/dev/null 2>&1 || echo "BUILDDECK_HANDOFF_WARNING=stage delivery failed"
   fi
 }
 finalize_build() {
   code=$?
   trap - EXIT
-  # Write the authoritative marker directly as well as to tee's stdout.
-  # Process-substitution tee can lag when Android starts the result callback.
+  # Write the authoritative terminal marker to the durable log.
   if [ "$code" -eq 0 ]; then
-    echo "BUILDDECK_RESULT=SUCCESS"
-    printf '%s\n' "BUILDDECK_RESULT=SUCCESS" >> "$log"
     report_stage "Complete"
+    echo "BUILDDECK_RESULT=SUCCESS"
   else
-    echo "BUILDDECK_RESULT=FAILED (exit $code)"
-    printf '%s\n' "BUILDDECK_RESULT=FAILED (exit $code)" >> "$log"
     report_stage "Build failed"
+    echo "BUILDDECK_RESULT=FAILED (exit $code)"
   fi
   # Termux's PendingIntent remains authoritative; the authenticated handoff
   # copies the full log to BuildDeck private storage when Android permits it.
   if [[ "$log_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -s "$log" ]; then
-    /system/bin/content write --uri "$log_uri" < "$log" >/dev/null 2>&1 || true
+    handoff_write "$log_uri" 20s < "$log" >/dev/null 2>&1 || echo "BUILDDECK_HANDOFF_WARNING=log delivery failed"
   fi
+  # Return a bounded summary to the PendingIntent; full output stays on disk.
+  tail -c 32000 "$log" >&3 || true
+  exec 3>&-
   exit "$code"
 }
 trap finalize_build EXIT
 
-echo "BuildDeck local build pipeline v4.3"
+echo "BuildDeck local build pipeline v4.8"
 report_stage "Preparing project"
 echo "Input: $inbox"
 echo "Java: $JAVA_HOME"
 echo "SDK: $ANDROID_HOME"
-for tool in unzip java find aapt2; do
+for tool in unzip java find aapt2 timeout; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Missing tool: $tool"; exit 3; }
 done
 [ -x "$JAVA_HOME/bin/java" ] || { echo "Java 17 unavailable"; exit 3; }
@@ -115,12 +121,13 @@ fi
 
 report_stage "Compiling Android app"
 echo "Running: ${cmd[0]} --no-daemon --max-workers=2 assembleDebug"
-"${cmd[@]}" --no-daemon --max-workers=2 assembleDebug "-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)"
+"${cmd[@]}" --no-daemon --max-workers=2 assembleDebug "-Pandroid.aapt2FromMavenOverride=$(command -v aapt2)" 3>&-
 apk="$(find "$root" -type f -path '*/build/outputs/apk/debug/*.apk' -name '*.apk' -print -quit)"
 [ -n "$apk" ] && [ -s "$apk" ] || { echo "Gradle completed without an APK"; exit 9; }
 report_stage "Packaging APK"
 dest="$out/${record_id:-$(date +%Y%m%d_%H%M%S)}_$(basename "$apk")"
-cp -f -- "$apk" "$dest"
+cp -f -- "$apk" "$dest.partial"
+mv -f -- "$dest.partial" "$dest"
 echo "BUILDDECK_APK=$dest"
 # User-visible convenience copy. The canonical collector backup stays in Out.
 # A failed second copy must never turn a real successful build into a failure.
@@ -134,7 +141,7 @@ apk_sha="$(sha256sum "$dest" | awk '{print $1}')"
 echo "BUILDDECK_APK_SHA256=$apk_sha"
 printf 'BUILDDECK_APK_SHA256=%s\n' "$apk_sha" >> "$log"
 if [[ "$apk_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
-  if /system/bin/content write --uri "$apk_uri" < "$dest" >/dev/null 2>&1; then
+  if handoff_write "$apk_uri" 90s < "$dest" >/dev/null 2>&1; then
     echo "BUILDDECK_APK_IMPORTED=YES"
   else
     echo "BUILDDECK_APK_IMPORTED=NO - use the manual import from Downloads"

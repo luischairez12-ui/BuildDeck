@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
+import java.security.MessageDigest
 
 /** User-granted access to Downloads/BuildDeck/Out, never all-files permission. */
 class OutputCollector(private val context: Context) {
@@ -113,12 +114,27 @@ class OutputCollector(private val context: Context) {
             val log = files.firstOrNull { it.isFile && it.name == "${record.id}.log" }
             val listedApk = files.firstOrNull { it.isFile && it.name?.startsWith("${record.id}_") == true &&
                 it.name?.endsWith(".apk", ignoreCase = true) == true }
-            val apkUri = listedApk?.uri ?: if (record.status == "SUCCESS_NEEDS_IMPORT") {
-                directApkUri(uri, record, ai)
-            } else null
-            val logText = if (log != null && log.length() in 1L..4_000_000L) {
-                runCatching { context.contentResolver.openInputStream(log.uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
-            } else null
+            val logUri = log?.uri ?: runCatching {
+                require(record.id.matches(Regex("[a-f0-9-]{36}")) && record.projectId.matches(Regex("[a-f0-9-]{36}")))
+                val rootId = DocumentsContract.getTreeDocumentId(uri)
+                DocumentsContract.buildDocumentUriUsingTree(uri, "$rootId/${record.projectId}/${record.id}.log")
+            }.getOrNull()
+            val logText = logUri?.let { u ->
+                runCatching {
+                    context.contentResolver.openInputStream(u)?.bufferedReader()?.use { reader ->
+                        val tail = StringBuilder()
+                        val buffer = CharArray(8192)
+                        while (true) {
+                            val n = reader.read(buffer)
+                            if (n < 0) break
+                            tail.append(buffer, 0, n)
+                            if (tail.length > 131072) tail.delete(0, tail.length - 131072)
+                        }
+                        tail.toString()
+                    }
+                }.getOrNull()
+            }
+            val apkUri = listedApk?.uri ?: directApkUri(uri, record, ai)
             val result = when {
                 logText?.contains("BUILDDECK_RESULT=SUCCESS") == true -> "SUCCESS"
                 logText?.contains("BUILDDECK_RESULT=FAILED") == true -> "FAILED"
@@ -129,6 +145,22 @@ class OutputCollector(private val context: Context) {
             val project = store.projects().firstOrNull { it.id == record.projectId }
             if ((result == "SUCCESS" || record.status == "SUCCESS_NEEDS_IMPORT") && apkUri != null && project != null) {
                 try {
+                    val expected = (logText.orEmpty() + "\n" + ai.buildLog(record)).lineSequence()
+                        .lastOrNull { it.startsWith("BUILDDECK_APK_SHA256=") }
+                        ?.substringAfter('=')?.trim()
+                    require(expected != null && expected.matches(Regex("[a-f0-9]{64}"))) { "No APK integrity marker yet" }
+                    val actual = context.contentResolver.openInputStream(apkUri)?.use { input ->
+                        val sha = MessageDigest.getInstance("SHA-256")
+                        val buffer = ByteArray(65536)
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            sha.update(buffer, 0, n)
+                        }
+                        sha.digest().joinToString("") { "%02x".format(it) }
+                    }
+                    require(actual == expected) { "APK checksum mismatch" }
+                    if (ai.buildRecords().firstOrNull { it.id == record.id }?.status == "READY") continue
                     store.importRelease(project, apkUri)
                     ai.completeLocalBuild(record.id, "READY", "APK saved automatically to the Vault", logText.orEmpty())
                     changed = true
@@ -142,7 +174,7 @@ class OutputCollector(private val context: Context) {
             } else if (result == "FAILED" && record.status != "FAILED") {
                 ai.completeLocalBuild(record.id, "FAILED", "Build failed — check the log", logText.orEmpty())
                 changed = true
-            } else if (result == "SUCCESS" && record.status !in setOf("SUCCESS_NEEDS_IMPORT", "FAILED")) {
+            } else if (result == "SUCCESS" && record.status != "SUCCESS_NEEDS_IMPORT") {
                 ai.completeLocalBuild(record.id, "SUCCESS_NEEDS_IMPORT", "Compiled; use manual APK import", logText.orEmpty())
                 changed = true
             } else if (stage.isNotBlank() && record.note != stage && result.isBlank() &&

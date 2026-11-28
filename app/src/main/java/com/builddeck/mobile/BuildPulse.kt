@@ -30,7 +30,8 @@ internal fun BuildPulseCard(
     compact: Boolean = false
 ) {
     val active = record.status in setOf("SUBMITTED", "RUNNING")
-    val stale = active && System.currentTimeMillis() - record.submittedAt > 35L * 60 * 1000
+    val noFirstStage = record.status == "SUBMITTED" && stage.isNullOrBlank()
+    val stale = active && System.currentTimeMillis() - record.submittedAt > (if (noFirstStage) 60_000L else 35L * 60 * 1000)
     val animating = active && !stale
     val failed = record.status == "FAILED"
     val imported = record.status == "READY"
@@ -107,16 +108,17 @@ internal fun BuildPulseCard(
                         imported -> "READY"
                         compiled -> "IMPORT"
                         stale -> "CHECK"
+                        noFirstStage -> "WAIT"
                         else -> "LIVE"
                     },
-                    imported || (animating && !failed)
+                    imported || (animating && !failed && !noFirstStage)
                 )
             }
             val displayedStage = when {
                 failed -> record.note.ifBlank { "See the build log for details." }
                 imported -> "Verified APK is available in Vault."
                 compiled -> "APK compiled, but automatic collection did not complete."
-                stale -> "No recent completion reported. Open the log or check Termux."
+                stale -> "No confirmation received. Build may still be running; check Termux or reconnect Out in Settings."
                 !stage.isNullOrBlank() -> stage
                 record.note.isNotBlank() && record.note != "Submitted to Termux" -> record.note
                 else -> "Waiting for Termux to report its first stage"
