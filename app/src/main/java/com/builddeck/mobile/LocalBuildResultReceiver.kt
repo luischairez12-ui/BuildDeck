@@ -20,6 +20,7 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
         val pending = goAsync()
         val appContext = context.applicationContext
         Thread {
+            synchronized(OutputCollector.recoveryLock) {
             try {
                 val store = Store(appContext)
                 val ai = AiControlStore(appContext, store)
@@ -109,6 +110,7 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
             } finally {
                 BuildTransferProvider.revoke(appContext, recordId)
                 pending.finish()
+            }
             }
         }.start()
     }

@@ -182,6 +182,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
         val records = buildRecords().toMutableList()
         val index = records.indexOfFirst { it.id == recordId }
         if (index == -1 || records[index].status in setOf("READY", "FAILED")) return
+        if (records[index].status == "SUCCESS_NEEDS_IMPORT" && status != "SUCCESS_NEEDS_IMPORT") return
         records[index] = records[index].copy(status = status, note = note.take(240))
         writeBuilds(records)
     }

@@ -100,7 +100,9 @@ class OutputCollector(private val context: Context) {
         }
     }
 
-    fun reconcile(store: Store, ai: AiControlStore): Boolean {
+    companion object { internal val recoveryLock = Any() }
+
+    fun reconcile(store: Store, ai: AiControlStore): Boolean = synchronized(recoveryLock) {
         val uri = treeUri() ?: return false
         val root = DocumentFile.fromTreeUri(context, uri)?.takeIf { it.isDirectory } ?: return false
         val directories = runCatching {
@@ -134,18 +136,24 @@ class OutputCollector(private val context: Context) {
                     }
                 }.getOrNull()
             }
-            val apkUri = listedApk?.uri ?: directApkUri(uri, record, ai)
-            val result = when {
-                logText?.contains("BUILDDECK_RESULT=SUCCESS") == true -> "SUCCESS"
-                logText?.contains("BUILDDECK_RESULT=FAILED") == true -> "FAILED"
-                else -> ""
-            }
+            val result = logText?.lineSequence()?.lastOrNull { it.startsWith("BUILDDECK_RESULT=") }
+                ?.substringAfter('=')?.substringBefore(' ').orEmpty()
+            val apkUri = if (result == "SUCCESS" || record.status == "SUCCESS_NEEDS_IMPORT") {
+                listedApk?.uri ?: runCatching {
+                    val name = logText?.lineSequence()?.lastOrNull { it.startsWith("BUILDDECK_APK=") }
+                        ?.substringAfter('=')?.substringAfterLast('/')
+                        ?.takeIf { it.startsWith("${record.id}_") && it.matches(Regex("[a-f0-9-]{36}_[a-zA-Z0-9_.-]+\\.apk")) }
+                    if (name != null) DocumentsContract.buildDocumentUriUsingTree(uri,
+                        "${DocumentsContract.getTreeDocumentId(uri)}/${record.projectId}/$name")
+                    else directApkUri(uri, record, ai)
+                }.getOrNull()
+            } else null
             val stage = logText?.lineSequence()
                 ?.filter { it.startsWith("BUILDDECK_STAGE=") }?.lastOrNull()?.substringAfter('=').orEmpty()
             val project = store.projects().firstOrNull { it.id == record.projectId }
             if ((result == "SUCCESS" || record.status == "SUCCESS_NEEDS_IMPORT") && apkUri != null && project != null) {
                 try {
-                    val expected = (logText.orEmpty() + "\n" + ai.buildLog(record)).lineSequence()
+                    val expected = (logText.orEmpty() + "\n" + runCatching { ai.buildLog(record) }.getOrDefault("")).lineSequence()
                         .lastOrNull { it.startsWith("BUILDDECK_APK_SHA256=") }
                         ?.substringAfter('=')?.trim()
                     require(expected != null && expected.matches(Regex("[a-f0-9]{64}"))) { "No APK integrity marker yet" }
@@ -167,7 +175,7 @@ class OutputCollector(private val context: Context) {
                 } catch (error: Exception) {
                     val note = "APK compiled; manual import needed: " + error.message.orEmpty().take(75)
                     if (record.note != note) {
-                        ai.updateBuildProgress(record.id, "SUCCESS_NEEDS_IMPORT", note)
+                        ai.completeLocalBuild(record.id, "SUCCESS_NEEDS_IMPORT", note, logText.orEmpty())
                         changed = true
                     }
                 }
@@ -183,6 +191,6 @@ class OutputCollector(private val context: Context) {
                 changed = true
             }
         }
-        return changed
+        changed
     }
 }
