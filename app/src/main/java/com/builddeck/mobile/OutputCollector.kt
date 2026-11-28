@@ -111,7 +111,7 @@ class OutputCollector(private val context: Context) {
     private fun reconcilePrivate(store: Store, ai: AiControlStore): Boolean {
         val dir = File(context.filesDir, "builddeck_results")
         var changed = false
-        for (record in ai.buildRecords().filter { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS", "SUCCESS_NEEDS_IMPORT", "FAILED") }.take(80)) {
+        for (record in ai.buildRecords().filter { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS", "SUCCESS_NEEDS_IMPORT", "FAILED", "DISMISSED") }.take(80)) {
             if (!record.id.matches(Regex("[a-f0-9-]{36}"))) continue
             val log = File(dir, "${record.id}.log")
             val apk = File(dir, "${record.id}.apk")
@@ -186,7 +186,7 @@ class OutputCollector(private val context: Context) {
         val directories = runCatching {
             root.listFiles().filter { it.isDirectory }.associateBy { it.name }
         }.getOrDefault(emptyMap())
-        for (record in ai.buildRecords().filter { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS", "SUCCESS_NEEDS_IMPORT", "FAILED") }.take(80)) {
+        for (record in ai.buildRecords().filter { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS", "SUCCESS_NEEDS_IMPORT", "FAILED", "DISMISSED") }.take(80)) {
             val files = runCatching { directories[record.projectId]?.listFiles()?.toList() }
                 .getOrNull().orEmpty()
             val log = files.firstOrNull { it.isFile && it.name == "${record.id}.log" }
@@ -255,7 +255,7 @@ class OutputCollector(private val context: Context) {
                         changed = true
                     }
                 }
-            } else if (result == "FAILED" && record.status != "FAILED") {
+            } else if (result == "FAILED" && record.status !in setOf("FAILED", "DISMISSED")) {
                 ai.completeLocalBuild(record.id, "FAILED", if (logText.orEmpty().contains("BUILDDECK_CANCELLED=YES")) "Cancelled by user" else "Build failed — check the log", logText.orEmpty())
                 changed = true
             } else if (result == "SUCCESS" && record.status != "SUCCESS_NEEDS_IMPORT") {

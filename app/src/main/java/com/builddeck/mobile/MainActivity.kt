@@ -252,6 +252,32 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         }
     }
 
+    fun recoverDownloads(manual: Boolean) {
+        scope.launch {
+            try {
+                val changed = withContext(Dispatchers.IO) { outputCollector.reconcile(store, aiControl) }
+                if (changed) { buildRevision++; reload() }
+                val count = DownloadsRecovery.request(context, aiControl.buildRecords(), manual)
+                if (manual) notify(if (count > 0) "Checking $count build(s) in Downloads; verified APKs will appear in Vault."
+                    else if (changed) "Recovered build results" else "No eligible pending builds. Import unrelated APKs manually.")
+            } catch (error: Exception) {
+                if (manual) notify("Downloads recovery: ${error.message}")
+                else android.util.Log.w("BuildDeck", "Downloads recovery unavailable", error)
+            }
+        }
+    }
+
+    // A bounded, throttled recovery pass while the app is visible. No all-files access.
+    LaunchedEffect(context) {
+        while (true) {
+            delay(30000)
+            val owner = context as? ComponentActivity
+            if (owner == null || owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                recoverDownloads(false)
+            }
+        }
+    }
+
     fun executeLocalBuild(project: Project) {
         if (busy) { notify("Another action is preparing. Try again when it finishes."); return }
         val existing = aiControl.buildRecords(project.id).firstOrNull { it.status in setOf("SUBMITTED", "RUNNING") && System.currentTimeMillis() - it.submittedAt < 5L * 60 * 1000 }
@@ -612,17 +638,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         onGitHub = { projects.firstOrNull()?.let { checkGithubUpdates(it) }
                             ?: run { section = "Projects" } },
                         onImport = { zipPicker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
-                        onRecover = {
-                            scope.launch {
-                                busy = true
-                                try {
-                                    val changed = withContext(Dispatchers.IO) { outputCollector.reconcile(store, aiControl) }
-                                    buildRevision++; reload()
-                                    notify(if (changed) "Build recovery updated results" else "No new verified result found. Check Termux or connect Out in Tools.")
-                                } catch (error: Exception) { notify("Recovery failed: ${error.message}") }
-                                finally { busy = false }
-                            }
-                        },
+                        onRecover = { recoverDownloads(true) },
                         onViewLog = { record ->
                             try { visibleLog = aiControl.buildLog(record) } catch (error: Exception) { notify("Cannot read log: ${error.message}") }
                         },
@@ -742,13 +758,20 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                     else -> NovaSettings(
                         projects = projects,
                         records = run { buildRevision; aiControl.buildRecords() },
-                        onRecover = {
+                        onRecover = { recoverDownloads(true) },
+                        onDismissStale = { ids ->
                             scope.launch {
                                 try {
-                                    val updated = withContext(Dispatchers.IO) { outputCollector.reconcile(store, aiControl) }
+                                    val count = withContext(Dispatchers.IO) {
+                                        synchronized(OutputCollector.recoveryLock) {
+                                            outputCollector.reconcile(store, aiControl)
+                                            aiControl.dismissStaleRequests(ids)
+                                        }
+                                    }
                                     buildRevision++; reload()
-                                    notify(if (updated) "Recovered build results" else "No new verified results found")
-                                } catch (error: Exception) { notify("Recovery failed: ${error.message}") }
+                                    notify("Dismissed $count stale request(s). Sources and APKs kept.")
+                                    recoverDownloads(true)
+                                } catch (error: Exception) { notify("Could not dismiss requests: ${error.message}") }
                             }
                         },
                         outputConnected = outputConnected,

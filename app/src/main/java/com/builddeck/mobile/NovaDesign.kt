@@ -462,7 +462,7 @@ internal fun NovaDashboard(
 ) {
     val active = selectedProject ?: projects.firstOrNull()
     val running = builds.filter { it.status in setOf("SUBMITTED", "RUNNING") }
-    val latest = running.firstOrNull() ?: builds.firstOrNull()
+    val latest = running.firstOrNull() ?: builds.firstOrNull { it.status != "DISMISSED" }
     val currentProject = latest?.let { record -> projects.firstOrNull { it.id == record.projectId } }
     val context = LocalContext.current
     val families = remember(projects) { studioGroups(projects) }

@@ -46,7 +46,7 @@ class BuildTransferProvider : ContentProvider() {
             throw FileNotFoundException("Unauthorized build")
         }
         val known = AiControlStore(app, Store(app)).buildRecords()
-            .any { it.id == id && it.status in setOf("SUBMITTED", "RUNNING") }
+            .any { it.id == id && it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS", "SUCCESS_NEEDS_IMPORT", "FAILED", "DISMISSED") }
         if (!known) throw FileNotFoundException("Build no longer running")
         val suffix = when (kind) {
             "apk" -> "apk"
@@ -71,15 +71,19 @@ class BuildTransferProvider : ContentProvider() {
         private const val PREF = "builddeck_ephemeral_build_handoff"
 
         /** Mint only after the user has approved the build and its record exists. */
-        fun issue(context: Context, recordId: String): Map<String, String> {
+        fun issue(context: Context, recordId: String, recovery: Boolean = false): Map<String, String> {
             require(recordId.matches(Regex("[a-f0-9-]{36}")))
             require(AiControlStore(context, Store(context)).buildRecords()
-                .any { it.id == recordId && it.status in setOf("SUBMITTED", "RUNNING") })
+                .any { it.id == recordId && (it.status in setOf("SUBMITTED", "RUNNING") ||
+                    recovery && it.status in setOf("SUCCESS", "SUCCESS_NEEDS_IMPORT", "FAILED", "DISMISSED")) })
             val secretBytes = ByteArray(32)
             SecureRandom().nextBytes(secretBytes)
-            val secret = Base64.getUrlEncoder().withoutPadding().encodeToString(secretBytes)
             val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            check(prefs.edit().putString("key_$recordId", secret)
+            val existing = prefs.getString("key_$recordId", null)?.takeIf {
+                recovery && System.currentTimeMillis() - prefs.getLong("time_$recordId", 0L) in 0L..(6L * 60 * 60 * 1000)
+            }
+            val secret = existing ?: Base64.getUrlEncoder().withoutPadding().encodeToString(secretBytes)
+            if (existing == null) check(prefs.edit().putString("key_$recordId", secret)
                 .putLong("time_$recordId", System.currentTimeMillis()).commit())
             return listOf("apk", "log", "stage").associateWith { kind ->
                 "content://${context.packageName}.handoff/v1/$recordId/$secret/$kind"

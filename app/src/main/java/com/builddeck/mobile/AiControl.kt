@@ -161,6 +161,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
         val index = records.indexOfFirst { it.id == recordId }
         if (index == -1) return@synchronized null
         if (records[index].status == "READY" && state != "READY") return@synchronized records[index]
+        if (records[index].status == "DISMISSED" && state == "FAILED") return@synchronized records[index]
         val logFile = File(logsDir, "$recordId.log")
         val deliveredLog = File(File(context.filesDir, "builddeck_results"), "$recordId.log")
         if (deliveredLog.isFile && deliveredLog.length() in 1L..4_000_000L) {
@@ -186,6 +187,21 @@ class AiControlStore(private val context: Context, private val store: Store) {
         if (records[index].status == "SUCCESS_NEEDS_IMPORT" && status != "SUCCESS_NEEDS_IMPORT") return@synchronized
         records[index] = records[index].copy(status = status, note = note.take(240))
         writeBuilds(records)
+    }
+
+    /** Hide stale requests without deleting their recovery identity, logs or source. */
+    fun dismissStaleRequests(ids: Set<String>): Int = synchronized(buildRecordsLock) {
+        val now = System.currentTimeMillis()
+        var count = 0
+        val updated = buildRecords().map { record ->
+            if (record.id in ids && record.status in setOf("SUBMITTED", "RUNNING") &&
+                now - record.submittedAt >= 5 * 60_000L) {
+                count++
+                record.copy(status = "DISMISSED", note = "Dismissed by user; output remains recoverable")
+            } else record
+        }
+        if (count > 0) writeBuilds(updated)
+        count
     }
 
     /** Explicitly clear an obsolete request; never mislabel it as a failed build. */

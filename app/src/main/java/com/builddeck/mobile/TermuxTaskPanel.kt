@@ -11,13 +11,15 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
 @Composable
-internal fun TermuxTaskPanel(projects: List<Project>, records: List<BuildRecord>, onRecover: () -> Unit) {
+internal fun TermuxTaskPanel(projects: List<Project>, records: List<BuildRecord>, onRecover: () -> Unit,
+    onDismissStale: (Set<String>) -> Unit) {
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences(TermuxTaskBridge.PREF, android.content.Context.MODE_PRIVATE) }
     var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var localError by remember { mutableStateOf("") }
     var cancelFor by remember { mutableStateOf<ManagedTermuxJob?>(null) }
     var showLegacy by remember { mutableStateOf(false) }
+    var dismissIds by remember { mutableStateOf<Set<String>?>(null) }
     LaunchedEffect(prefs) { while (true) { tick = System.currentTimeMillis(); delay(1000) } }
     val privateReport = remember(tick) { TermuxTaskBridge.privateSnapshot(context) }
     val snapshot = privateReport?.first ?: prefs.getString("snapshot", "").orEmpty()
@@ -65,6 +67,21 @@ internal fun TermuxTaskPanel(projects: List<Project>, records: List<BuildRecord>
             val canCancel = job.phase in setOf("STARTING", "PREPARING", "EXTRACTING", "COMPILING") && job.process == "ACTIVE"
             if (canCancel) OutlinedButton(onClick = { cancelFor = job }, enabled = !waiting && sent <= received) { Text("Cancel this build") }
         }
+        val stale = records.filter { record -> record.status in setOf("SUBMITTED", "RUNNING") &&
+            tick - record.submittedAt >= 5 * 60_000L && jobs.none { it.id == record.id && it.process != "STOPPED" } }
+        if (stale.isNotEmpty()) {
+            HorizontalDivider()
+            Text("Stale requests (" + stale.size + ")", fontWeight = FontWeight.Bold)
+            NovaHint("Dismiss old requests from the live monitor after stopping any remaining Termux jobs. Output can still be recovered.")
+            OutlinedButton(onClick = { dismissIds = stale.map { it.id }.toSet() }, modifier = Modifier.fillMaxWidth()) {
+                Text("Dismiss all stale requests")
+            }
+            stale.take(20).forEach { record ->
+                TextButton(onClick = { dismissIds = setOf(record.id) }) {
+                    Text("Dismiss " + (projects.firstOrNull { it.id == record.projectId }?.name ?: record.id.take(8)), maxLines = 2)
+                }
+            }
+        }
         val legacy = records.filter { it.status in setOf("SUBMITTED", "RUNNING") && jobs.none { job -> job.id == it.id } }
         if (legacy.isNotEmpty()) {
             TextButton(onClick = { showLegacy = !showLegacy }) { Text("Unverified requests (" + legacy.size + ")") }
@@ -75,6 +92,12 @@ internal fun TermuxTaskPanel(projects: List<Project>, records: List<BuildRecord>
                 }
             }
         }
+    }
+    dismissIds?.let { ids ->
+        AlertDialog(onDismissRequest = { dismissIds = null }, title = { Text("Dismiss stale requests?") },
+            text = { Text("Confirm you have stopped or no longer need these Termux jobs. This hides requests, not processes. BuildDeck checks for recoverable APKs first and keeps the original records for later recovery. No project or APK is deleted.") },
+            confirmButton = { TextButton(onClick = { dismissIds = null; onDismissStale(ids) }) { Text("Dismiss " + ids.size) } },
+            dismissButton = { TextButton(onClick = { dismissIds = null }) { Text("Keep") } })
     }
     cancelFor?.let { job ->
         AlertDialog(onDismissRequest = { cancelFor = null }, title = { Text("Cancel this build?") },

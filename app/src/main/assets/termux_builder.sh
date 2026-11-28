@@ -56,7 +56,7 @@ report_stage() {
   local description="$1"
   echo "BUILDDECK_STAGE=$description"
   # Actual stage events, no simulated percent complete.
-  if [[ "$stage_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
+  if [[ "$description" != "Build failed" && "$description" != "Cancelled by user" && "$stage_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
     printf "%s\n" "$description" | handoff_write "$stage_uri" 12s >/dev/null 2>&1 || echo "BUILDDECK_HANDOFF_WARNING=stage delivery failed"
   fi
 }
@@ -88,7 +88,7 @@ finalize_build() {
 }
 trap finalize_build EXIT
 
-echo "BuildDeck local build pipeline v5.1"
+echo "BuildDeck local build pipeline v5.2"
 # Protect the existing per-project workspace from concurrent new managed builds.
 if command -v flock >/dev/null 2>&1; then
   exec 8>"$HOME/builddeck/locks/$project_id.lock"
@@ -194,7 +194,7 @@ else
 fi
 apk_sha="$(sha256sum "$dest" | awk '{print $1}')"
 echo "BUILDDECK_APK_SHA256=$apk_sha"
-printf 'BUILDDECK_APK_SHA256=%s\n' "$apk_sha" >> "$log"
+report_stage "Package complete • saving to Vault"
 if [[ "$apk_uri" == content://com.builddeck.mobile.handoff/v1/* ]] && [ -x /system/bin/content ]; then
   if handoff_write "$apk_uri" 90s < "$dest" >/dev/null 2>&1; then
     echo "BUILDDECK_APK_IMPORTED=YES"

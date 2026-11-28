@@ -97,6 +97,7 @@ internal fun BuildPulseCard(
                 Column(Modifier.weight(1f)) {
                     Text(
                         when {
+                            record.status == "DISMISSED" -> "Request dismissed"
                             failed -> "Build encountered an error"
                             imported -> "Build complete • APK saved"
                             compiled -> "Compiled • needs APK import"
@@ -111,6 +112,7 @@ internal fun BuildPulseCard(
                 }
                 NovaStatus(
                     when {
+                        record.status == "DISMISSED" -> "CLOSED"
                         failed -> "FAILED"
                         imported -> "READY"
                         compiled -> "IMPORT"
@@ -122,6 +124,7 @@ internal fun BuildPulseCard(
                 )
             }
             val displayedStage = when {
+                record.status == "DISMISSED" -> "Hidden from live monitor; saved output can still be recovered."
                 failed -> record.note.ifBlank { "See the build log for details." }
                 imported -> "Verified APK is available in Vault."
                 compiled -> "APK compiled, but automatic collection did not complete."
@@ -147,33 +150,39 @@ internal fun BuildPulseCard(
                 )
             }
             if (!compact) {
-                val knownStage = when {
-                    record.status == "READY" || record.status == "SUCCESS_NEEDS_IMPORT" -> 4
-                    record.status == "FAILED" -> -1
-                    else -> when {
-                        stage?.contains("Packaging", true) == true -> 3
-                        stage?.contains("APK ready", true) == true -> 4
-                        stage?.contains("Compiling", true) == true -> 2
-                        stage?.contains("Extracting", true) == true -> 1
-                        stage?.contains("Preparing", true) == true -> 0
-                        else -> -1
-                    }
+                // A stage turning green means it finished, not merely started.
+                val currentStage = when {
+                    imported || compiled -> 4
+                    stage?.contains("Package complete", true) == true -> 4
+                    stage?.contains("APK ready", true) == true -> 4
+                    stage?.contains("Complete", true) == true -> 4
+                    stage?.contains("Packaging", true) == true -> 3
+                    stage?.contains("Compiling", true) == true -> 2
+                    stage?.contains("Extracting", true) == true -> 1
+                    stage?.contains("Preparing", true) == true -> 0
+                    else -> -1
                 }
+                val completedThrough = if (imported) 4 else currentStage - 1
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                     listOf("Prepare", "Extract", "Compile", "Package", "Vault").forEachIndexed { index, label ->
                         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                             Surface(
                                 color = when {
-                                    failed -> NovaRed.copy(alpha = .16f)
-                                    index <= knownStage -> accent.copy(alpha = .85f)
+                                    index <= completedThrough -> NovaGreen
+                                    index == currentStage && failed -> NovaRed
+                                    index == currentStage && active && !stale -> NovaBlue.copy(alpha = pulse)
+                                    index == currentStage && (stale || compiled) -> Color(0xFFC28C30)
                                     else -> MaterialTheme.colorScheme.outlineVariant
                                 },
                                 shape = RoundedCornerShape(4.dp),
-                                modifier = Modifier.fillMaxWidth().height(5.dp)
+                                modifier = Modifier.fillMaxWidth().height(7.dp)
                             ) {}
                             Spacer(Modifier.height(5.dp))
+                            Text(if (index <= completedThrough) "✓" else if (index == currentStage && active) "•" else "–",
+                                color = if (index <= completedThrough) NovaGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             Text(label, style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (index <= completedThrough) NovaGreen else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1)
                         }
                     }

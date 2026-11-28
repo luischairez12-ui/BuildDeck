@@ -43,6 +43,7 @@ jobs:
         run: |
           bash -n app/src/main/assets/termux_builder.sh
           bash -n app/src/main/assets/termux_tasks.sh
+          bash -n app/src/main/assets/termux_recover_downloads.sh
           bash tools/test_termux_tasks.sh
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug --stacktrace
@@ -50,7 +51,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: builddeck-0.5.1-task-manager-sharing-apk
+          name: builddeck-0.5.2-download-recovery-stages-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
