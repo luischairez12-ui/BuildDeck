@@ -253,6 +253,9 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
     }
 
     fun executeLocalBuild(project: Project) {
+        if (busy) { notify("Another action is preparing. Try again when it finishes."); return }
+        val existing = aiControl.buildRecords(project.id).firstOrNull { it.status in setOf("SUBMITTED", "RUNNING") && System.currentTimeMillis() - it.submittedAt < 5L * 60 * 1000 }
+        if (existing != null) { notify("A recent request for this source is already active. Check Builds or Tools."); return }
         scope.launch {
             busy = true
             try {
@@ -395,6 +398,24 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                 notify("GitHub check failed: " + error.message)
             } finally { busy = false }
         }
+    }
+
+    fun shareRelease(release: Release) {
+        try {
+            val file = File(release.path).canonicalFile
+            require(file.parentFile == File(context.filesDir, "releases").canonicalFile && file.isFile) { "APK unavailable" }
+            val name = release.name.substringAfterLast('/').take(150).let {
+                if (it.endsWith(".apk", true)) it else "$it.apk"
+            }
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file, name)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/octet-stream"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = android.content.ClipData.newRawUri(name, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Share APK").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (error: Exception) { notify("Unable to share APK: ${error.message}") }
     }
 
     fun installRelease(release: Release) {
@@ -698,6 +719,7 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         projects = projects,
                         onSelectProject = { selectedId = it },
                         onInstall = ::installRelease,
+                        onShare = ::shareRelease,
                         onImport = { project ->
                             importApkFor = project
                             apkPicker.launch(arrayOf("application/vnd.android.package-archive",
@@ -718,6 +740,17 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
                         }
                     )
                     else -> NovaSettings(
+                        projects = projects,
+                        records = run { buildRevision; aiControl.buildRecords() },
+                        onRecover = {
+                            scope.launch {
+                                try {
+                                    val updated = withContext(Dispatchers.IO) { outputCollector.reconcile(store, aiControl) }
+                                    buildRevision++; reload()
+                                    notify(if (updated) "Recovered build results" else "No new verified results found")
+                                } catch (error: Exception) { notify("Recovery failed: ${error.message}") }
+                            }
+                        },
                         outputConnected = outputConnected,
                         githubAccount = githubAccount,
                         darkMode = novaDarkMode,

@@ -7,6 +7,7 @@
     <queries><package android:name="com.termux" /></queries>
     <application android:allowBackup="false" android:label="BuildDeck" android:icon="@drawable/ic_builddeck" android:supportsRtl="true" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false">
         <receiver android:name=".LocalBuildResultReceiver" android:exported="false" />
+        <receiver android:name=".TermuxTaskReceiver" android:exported="false" />
         <!-- Write-only, short-lived capability URLs for the approved Termux build. -->
         <provider android:name=".BuildTransferProvider"
             android:authorities="${applicationId}.handoff"

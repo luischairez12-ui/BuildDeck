@@ -228,6 +228,7 @@ internal fun NovaVault(
     projects: List<Project>,
     onSelectProject: (String) -> Unit,
     onInstall: (Release) -> Unit,
+    onShare: (Release) -> Unit,
     onImport: (Project) -> Unit,
     onSaveToDownloads: (Release) -> Unit
 ) {
@@ -315,8 +316,9 @@ internal fun NovaVault(
                         })
                     }
                 }
-                TextButton(onClick = { onSaveToDownloads(release) }) {
-                    Text("↓  Save APK to Downloads", color = NovaBlue)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onShare(release) }, modifier = Modifier.weight(1f)) { Text("Share APK") }
+                    OutlinedButton(onClick = { onSaveToDownloads(release) }, modifier = Modifier.weight(1f)) { Text("Save APK") }
                 }
                 if (projects.any { it.id == release.projectId }) {
                     TextButton(onClick = { onSelectProject(release.projectId) }) {
@@ -360,6 +362,7 @@ internal fun NovaVault(
 
 @Composable
 internal fun NovaSettings(
+    projects: List<Project>, records: List<BuildRecord>, onRecover: () -> Unit,
     outputConnected: Boolean,
     githubAccount: String?,
     darkMode: Boolean,
@@ -370,7 +373,8 @@ internal fun NovaSettings(
     var showRequirements by remember { mutableStateOf(false) }
     LazyColumn(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { NovaHeader("Settings", "Appearance, integrations, and device tools.") }
+        item { NovaHeader("Tools", "Termux task manager, appearance and device tools.") }
+        item { TermuxTaskPanel(projects, records, onRecover) }
         item {
             NovaSection("Appearance")
             NovaCard {
@@ -423,7 +427,7 @@ internal fun NovaSettings(
         }
         item {
             NovaCard {
-                Text("BuildDeck v0.4.6 • AI Sync Inbox",
+                Text("BuildDeck v0.5.1 • Task Manager & Sharing",
                     fontWeight = FontWeight.Bold)
                 NovaHint("Restored the original blue-layer brand mark and top hero artwork. Nova Studio retains your projects, GitHub connection, APK Vault and local builder.")
                 NovaHint("Remote ChatGPT phone access is not enabled.")
