@@ -209,16 +209,16 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         }
     }
 
-    // Reconcile granted logs and APKs on every screen, including Dashboard.
+    // Private handoff recovery must run even if the optional Out folder is disconnected.
     LaunchedEffect(outputConnected) {
-        if (outputConnected) {
-            while (true) {
-                val updated = withContext(Dispatchers.IO) {
-                    runCatching { outputCollector.reconcile(store, aiControl) }.getOrDefault(false)
-                }
-                if (updated) { buildRevision++; reload() }
-                delay(4000)
+        while (true) {
+            val updated = withContext(Dispatchers.IO) {
+                runCatching { outputCollector.reconcile(store, aiControl) }
+                    .onFailure { android.util.Log.w("BuildDeck", "Result recovery failed", it) }
+                    .getOrDefault(false)
             }
+            if (updated) { buildRevision++; reload() }
+            delay(4000)
         }
     }
 
@@ -229,16 +229,11 @@ fun BuildDeckApp(store: Store, incomingSharedApk: Uri?, onShareHandled: () -> Un
         while (true) {
             delay(1300)
             val activity = context as? ComponentActivity
-            if (activity?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) != true) continue
+            if (activity != null && !activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) continue
             val records = aiControl.buildRecords()
             val active = records.filter { it.status in setOf("SUBMITTED", "RUNNING") &&
                 System.currentTimeMillis() - it.submittedAt < 2L * 60 * 60 * 1000 }
-            for (record in active) {
-                val stage = BuildTransferProvider.stage(context, record.id)
-                if (!stage.isNullOrBlank() && record.note != stage) {
-                    aiControl.updateBuildProgress(record.id, "RUNNING", stage)
-                }
-            }
+            // The IO recovery loop owns stage and terminal-result reconciliation.
             val current = aiControl.buildRecords()
             val signature = current.take(60).joinToString("|") {
                 it.id + ":" + it.status + ":" + it.note

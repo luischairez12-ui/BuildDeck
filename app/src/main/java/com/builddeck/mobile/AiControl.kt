@@ -142,7 +142,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
         return snapshot
     }
 
-    fun recordBuild(project: Project, note: String = "Submitted to Termux"): BuildRecord {
+    fun recordBuild(project: Project, note: String = "Submitted to Termux"): BuildRecord = synchronized(buildRecordsLock) {
         val record = BuildRecord(UUID.randomUUID().toString(), project.id, System.currentTimeMillis(), "SUBMITTED", note = note)
         writeBuilds(buildRecords() + record)
         return record
@@ -155,11 +155,12 @@ class AiControlStore(private val context: Context, private val store: Store) {
     }.filter { projectId == null || it.projectId == projectId }.sortedByDescending { it.submittedAt }
 
     /** Official Termux callback result; never equate 'submitted' with 'built'. */
-    fun completeLocalBuild(recordId: String, state: String, detail: String, console: String): BuildRecord? {
+    fun completeLocalBuild(recordId: String, state: String, detail: String, console: String): BuildRecord? = synchronized(buildRecordsLock) {
         require(state in setOf("READY", "SUCCESS_NEEDS_IMPORT", "FAILED"))
         val records = buildRecords().toMutableList()
         val index = records.indexOfFirst { it.id == recordId }
         if (index == -1) return null
+        if (records[index].status == "READY" && state != "READY") return records[index]
         val logFile = File(logsDir, "$recordId.log")
         val deliveredLog = File(File(context.filesDir, "builddeck_results"), "$recordId.log")
         if (deliveredLog.isFile && deliveredLog.length() in 1L..4_000_000L) {
@@ -177,7 +178,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
         return updated
     }
 
-    fun updateBuildProgress(recordId: String, status: String, note: String) {
+    fun updateBuildProgress(recordId: String, status: String, note: String) = synchronized(buildRecordsLock) {
         require(status in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT"))
         val records = buildRecords().toMutableList()
         val index = records.indexOfFirst { it.id == recordId }
@@ -188,7 +189,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
     }
 
     /** Explicitly clear an obsolete request; never mislabel it as a failed build. */
-    fun dismissBuild(recordId: String) {
+    fun dismissBuild(recordId: String) = synchronized(buildRecordsLock) {
         val existing = buildRecords()
         writeBuilds(existing.filterNot { it.id == recordId })
     }
@@ -197,7 +198,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
      * Clean the visible history for this project only.
      * Never remove in-progress or needs-import requests, saved APKs, or source backups.
      */
-    fun clearCompletedHistory(projectId: String): Int {
+    fun clearCompletedHistory(projectId: String): Int = synchronized(buildRecordsLock) {
         val existing = buildRecords()
         val after = existing.filterNot { record ->
             record.projectId == projectId && record.status in setOf("READY", "FAILED")
@@ -207,7 +208,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
         return removed
     }
 
-    fun importBuildLog(recordId: String, uri: Uri): BuildRecord {
+    fun importBuildLog(recordId: String, uri: Uri): BuildRecord = synchronized(buildRecordsLock) {
         val records = buildRecords().toMutableList()
         val i = records.indexOfFirst { it.id == recordId }
         require(i != -1) { "Build request not found" }
@@ -258,7 +259,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
     private fun writeSafely(dest: File, text: String) {
         val temporary = File(dest.parentFile, dest.name + ".pending")
         temporary.writeText(text)
-        require(temporary.renameTo(dest) || run { dest.delete(); temporary.renameTo(dest) }) { "Cannot save BuildDeck record" }
+        require(temporary.renameTo(dest)) { "Cannot save BuildDeck record" }
     }
 
     private fun validatePath(path: String) {
@@ -273,6 +274,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
     }
 
     companion object {
+        private val buildRecordsLock = Any()
         fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it) }
 

@@ -17,6 +17,11 @@ class LocalBuildResultReceiver : BroadcastReceiver() {
         val recordId = intent.getStringExtra(EXTRA_RECORD) ?: return
         if (!recordId.matches(Regex("[a-f0-9-]{36}"))) return
         val bundle = intent.getBundleExtra("result")
+        // Missing extras are not a compiler failure. Durable handoff recovery may still succeed.
+        if (bundle == null) {
+            Log.w("BuildDeck", "Termux callback missing result bundle for $recordId")
+            return
+        }
         val pending = goAsync()
         val appContext = context.applicationContext
         Thread {

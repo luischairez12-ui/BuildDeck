@@ -10,8 +10,8 @@ android {
         applicationId = "com.builddeck.mobile"
         minSdk = 29
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.4.8"
+        versionCode = 19
+        versionName = "0.4.9"
     }
     buildTypes {
         release { isMinifyEnabled = false }

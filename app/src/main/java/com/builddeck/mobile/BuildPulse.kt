@@ -31,7 +31,14 @@ internal fun BuildPulseCard(
 ) {
     val active = record.status in setOf("SUBMITTED", "RUNNING")
     val noFirstStage = record.status == "SUBMITTED" && stage.isNullOrBlank()
-    val stale = active && System.currentTimeMillis() - record.submittedAt > (if (noFirstStage) 60_000L else 35L * 60 * 1000)
+    var now by remember(record.id) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(record.id, active) {
+        while (active) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(2000)
+        }
+    }
+    val stale = active && now - record.submittedAt > (if (noFirstStage) 60_000L else 35L * 60 * 1000)
     val animating = active && !stale
     val failed = record.status == "FAILED"
     val imported = record.status == "READY"

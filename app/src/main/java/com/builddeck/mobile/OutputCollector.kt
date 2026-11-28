@@ -6,6 +6,8 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import java.security.MessageDigest
+import java.io.File
+import java.io.RandomAccessFile
 
 /** User-granted access to Downloads/BuildDeck/Out, never all-files permission. */
 class OutputCollector(private val context: Context) {
@@ -102,15 +104,89 @@ class OutputCollector(private val context: Context) {
 
     companion object { internal val recoveryLock = Any() }
 
+    /** Recover a terminal result directly from the authenticated private handoff.
+     *  The Termux PendingIntent and a user-granted shared folder are optional here.
+     *  A success marker alone is insufficient: require the exact APK digest.
+     */
+    private fun reconcilePrivate(store: Store, ai: AiControlStore): Boolean {
+        val dir = File(context.filesDir, "builddeck_results")
+        var changed = false
+        for (record in ai.buildRecords().filter { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS", "SUCCESS_NEEDS_IMPORT", "FAILED") }.take(80)) {
+            if (!record.id.matches(Regex("[a-f0-9-]{36}"))) continue
+            val log = File(dir, "${record.id}.log")
+            val apk = File(dir, "${record.id}.apk")
+            val console = runCatching {
+                if (!log.isFile) "" else RandomAccessFile(log, "r").use { file ->
+                    val size = minOf(file.length(), 131072L).toInt()
+                    val bytes = ByteArray(size)
+                    file.seek(file.length() - size)
+                    file.readFully(bytes)
+                    String(bytes, Charsets.UTF_8)
+                }
+            }.getOrDefault("")
+            val marker = console.lineSequence().lastOrNull { it.startsWith("BUILDDECK_RESULT=") }
+                ?.substringAfter('=')?.substringBefore(' ').orEmpty()
+            val expected = console.lineSequence().lastOrNull { it.startsWith("BUILDDECK_APK_SHA256=") }
+                ?.substringAfter('=')?.trim()?.takeIf { it.matches(Regex("[a-f0-9]{64}")) }
+            if (marker == "SUCCESS") {
+                val project = store.projects().firstOrNull { it.id == record.projectId }
+                val valid = expected != null && project != null && apk.isFile &&
+                    apk.length() in 101L..(500L * 1024 * 1024) && runCatching {
+                        val sha = MessageDigest.getInstance("SHA-256")
+                        apk.inputStream().buffered().use { input ->
+                            val buffer = ByteArray(65536)
+                            while (true) {
+                                val n = input.read(buffer)
+                                if (n < 0) break
+                                sha.update(buffer, 0, n)
+                            }
+                        }
+                        sha.digest().joinToString("") { "%02x".format(it) } == expected
+                    }.getOrDefault(false)
+                if (valid && project != null) {
+                    try {
+                        // Deterministic name lets a recovery retry avoid duplicate Vault entries.
+                        val name = "BuildDeck-${record.id}.apk"
+                        if (store.releases().none { it.projectId == project.id && it.name == name && File(it.path).isFile }) {
+                            store.importLocalRelease(project, apk, name)
+                        }
+                        ai.completeLocalBuild(record.id, "READY", "Recovered verified APK from private handoff", console)
+                        BuildTransferProvider.revoke(context, record.id)
+                        changed = true
+                    } catch (error: Exception) {
+                        val note = "Compiled; Vault import needs attention: " + error.message.orEmpty().take(85)
+                        if (record.status != "SUCCESS_NEEDS_IMPORT" || record.note != note) {
+                            ai.completeLocalBuild(record.id, "SUCCESS_NEEDS_IMPORT", note, console)
+                            changed = true
+                        }
+                    }
+                } else if (record.status != "SUCCESS_NEEDS_IMPORT") {
+                    ai.completeLocalBuild(record.id, "SUCCESS_NEEDS_IMPORT", "Compiled; awaiting verified APK or backup recovery", console)
+                    changed = true
+                }
+            } else if (marker == "FAILED" && record.status in setOf("SUBMITTED", "RUNNING")) {
+                ai.completeLocalBuild(record.id, "FAILED", "Build failed — check the log", console)
+                changed = true
+            } else if (record.status in setOf("SUBMITTED", "RUNNING")) {
+                val stage = BuildTransferProvider.stage(context, record.id)
+                if (!stage.isNullOrBlank() && (record.note != stage || record.status == "SUBMITTED")) {
+                    ai.updateBuildProgress(record.id, "RUNNING", stage)
+                    changed = true
+                }
+            }
+        }
+        return changed
+    }
+
     fun reconcile(store: Store, ai: AiControlStore): Boolean = synchronized(recoveryLock) {
-        val uri = treeUri() ?: return false
-        val root = DocumentFile.fromTreeUri(context, uri)?.takeIf { it.isDirectory } ?: return false
+        var changed = reconcilePrivate(store, ai)
+        val uri = treeUri() ?: return changed
+        val root = runCatching { DocumentFile.fromTreeUri(context, uri) }.getOrNull()
+            ?.takeIf { it.isDirectory } ?: return changed
         val directories = runCatching {
             root.listFiles().filter { it.isDirectory }.associateBy { it.name }
         }.getOrDefault(emptyMap())
-        var changed = false
-        for (record in ai.buildRecords().take(80)) {
-            if (record.status !in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT", "FAILED")) continue
+        for (record in ai.buildRecords().filter { it.status in setOf("SUBMITTED", "RUNNING", "SUCCESS", "SUCCESS_NEEDS_IMPORT", "FAILED") }.take(80)) {
             val files = runCatching { directories[record.projectId]?.listFiles()?.toList() }
                 .getOrNull().orEmpty()
             val log = files.firstOrNull { it.isFile && it.name == "${record.id}.log" }
@@ -138,7 +214,7 @@ class OutputCollector(private val context: Context) {
             }
             val result = logText?.lineSequence()?.lastOrNull { it.startsWith("BUILDDECK_RESULT=") }
                 ?.substringAfter('=')?.substringBefore(' ').orEmpty()
-            val apkUri = if (result == "SUCCESS" || record.status == "SUCCESS_NEEDS_IMPORT") {
+            val apkUri = if (result == "SUCCESS" || record.status in setOf("SUCCESS", "SUCCESS_NEEDS_IMPORT")) {
                 listedApk?.uri ?: runCatching {
                     val name = logText?.lineSequence()?.lastOrNull { it.startsWith("BUILDDECK_APK=") }
                         ?.substringAfter('=')?.substringAfterLast('/')
@@ -151,7 +227,7 @@ class OutputCollector(private val context: Context) {
             val stage = logText?.lineSequence()
                 ?.filter { it.startsWith("BUILDDECK_STAGE=") }?.lastOrNull()?.substringAfter('=').orEmpty()
             val project = store.projects().firstOrNull { it.id == record.projectId }
-            if ((result == "SUCCESS" || record.status == "SUCCESS_NEEDS_IMPORT") && apkUri != null && project != null) {
+            if ((result == "SUCCESS" || record.status in setOf("SUCCESS", "SUCCESS_NEEDS_IMPORT")) && apkUri != null && project != null) {
                 try {
                     val expected = (logText.orEmpty() + "\n" + runCatching { ai.buildLog(record) }.getOrDefault("")).lineSequence()
                         .lastOrNull { it.startsWith("BUILDDECK_APK_SHA256=") }
