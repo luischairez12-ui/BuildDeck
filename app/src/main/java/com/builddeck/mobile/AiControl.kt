@@ -145,7 +145,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
     fun recordBuild(project: Project, note: String = "Submitted to Termux"): BuildRecord = synchronized(buildRecordsLock) {
         val record = BuildRecord(UUID.randomUUID().toString(), project.id, System.currentTimeMillis(), "SUBMITTED", note = note)
         writeBuilds(buildRecords() + record)
-        return record
+        record
     }
 
     fun buildRecords(projectId: String? = null): List<BuildRecord> = readArray(buildsFile).mapNotNull { raw ->
@@ -159,8 +159,8 @@ class AiControlStore(private val context: Context, private val store: Store) {
         require(state in setOf("READY", "SUCCESS_NEEDS_IMPORT", "FAILED"))
         val records = buildRecords().toMutableList()
         val index = records.indexOfFirst { it.id == recordId }
-        if (index == -1) return null
-        if (records[index].status == "READY" && state != "READY") return records[index]
+        if (index == -1) return@synchronized null
+        if (records[index].status == "READY" && state != "READY") return@synchronized records[index]
         val logFile = File(logsDir, "$recordId.log")
         val deliveredLog = File(File(context.filesDir, "builddeck_results"), "$recordId.log")
         if (deliveredLog.isFile && deliveredLog.length() in 1L..4_000_000L) {
@@ -175,15 +175,15 @@ class AiControlStore(private val context: Context, private val store: Store) {
         )
         records[index] = updated
         writeBuilds(records)
-        return updated
+        updated
     }
 
-    fun updateBuildProgress(recordId: String, status: String, note: String) = synchronized(buildRecordsLock) {
+    fun updateBuildProgress(recordId: String, status: String, note: String): Unit = synchronized(buildRecordsLock) {
         require(status in setOf("SUBMITTED", "RUNNING", "SUCCESS_NEEDS_IMPORT"))
         val records = buildRecords().toMutableList()
         val index = records.indexOfFirst { it.id == recordId }
-        if (index == -1 || records[index].status in setOf("READY", "FAILED")) return
-        if (records[index].status == "SUCCESS_NEEDS_IMPORT" && status != "SUCCESS_NEEDS_IMPORT") return
+        if (index == -1 || records[index].status in setOf("READY", "FAILED")) return@synchronized
+        if (records[index].status == "SUCCESS_NEEDS_IMPORT" && status != "SUCCESS_NEEDS_IMPORT") return@synchronized
         records[index] = records[index].copy(status = status, note = note.take(240))
         writeBuilds(records)
     }
@@ -205,7 +205,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
         }
         val removed = existing.size - after.size
         if (removed > 0) writeBuilds(after)
-        return removed
+        removed
     }
 
     fun importBuildLog(recordId: String, uri: Uri): BuildRecord = synchronized(buildRecordsLock) {
@@ -235,7 +235,7 @@ class AiControlStore(private val context: Context, private val store: Store) {
         val updated = records[i].copy(status = status, logFile = output.absolutePath)
         records[i] = updated
         writeBuilds(records)
-        return updated
+        updated
     }
 
     fun buildLog(record: BuildRecord): String {
